@@ -732,7 +732,12 @@
           inMonto
         ]),
 
-        campo(b.tipo === 'recurrente' ? 'Empieza a contar desde' : 'Fecha de inicio', inInicio),
+        campo(
+          b.tipo === 'recurrente' ? 'Desde cuándo quieres histórico' : 'Fecha de inicio',
+          inInicio,
+          b.tipo === 'recurrente'
+            ? 'No cambia dónde empiezan los periodos — eso lo marca lo de arriba. Sirve para poder mirar hacia atrás: ponla en la fecha más antigua de la que quieras apuntar gastos.'
+            : null),
         b.tipo === 'puntual' ? campo('Fecha de fin (opcional)', inFin,
           'Si la dejas en blanco, el presupuesto no caduca.') : null
       ]),
@@ -1260,22 +1265,41 @@
      antes se guardaba sin decir nada. Ahora se avisa y se ofrece la fecha
      buena de un toque. */
   function avisoDeFechaFuera(b, elegidos, alCambiar) {
+    /* Un presupuesto de una vez tiene un rango fijo: fuera de él, el gasto no
+       cuenta y punto.
+
+       En uno que se repite, `inicio` NO recorta los periodos —los marcan el
+       calendario o los días de corte—, así que un gasto fechado un poco antes
+       cae igualmente dentro del periodo en curso y cuenta perfectamente. Solo
+       hay problema si su periodo entero queda por detrás del inicio: entonces
+       el gasto cuenta, pero no hay forma de llegar a verlo, porque la flecha
+       de retroceder se planta ahí. */
     const fuera = elegidos.filter((p) => {
-      if (p.inicio && b.fecha < p.inicio) return true;
-      if (p.tipo !== 'recurrente' && p.fin && b.fecha > p.fin) return true;
-      return false;
+      if (p.tipo !== 'recurrente') {
+        if (p.inicio && b.fecha < p.inicio) return true;
+        return !!(p.fin && b.fecha > p.fin);
+      }
+      if (!p.inicio || b.fecha >= p.inicio) return false;
+      const ciclo = Store.cicloDe(p, b.fecha);
+      return !!(ciclo && ciclo.fin && ciclo.fin < p.inicio);
     });
     if (!fuera.length) return null;
 
     const p = fuera[0];
-    const rango = p.fin
-      ? 'va del ' + D.fechaMedia(p.inicio) + ' al ' + D.fechaMedia(p.fin)
-      : 'empieza el ' + D.fechaMedia(p.inicio);
+    const recurrente = p.tipo === 'recurrente';
     const arreglo = (p.fin && b.fecha > p.fin) ? p.fin : p.inicio;
 
+    const explicacion = recurrente
+      ? 'Este gasto se apuntaría en un periodo anterior al que «' + p.nombre +
+        '» empieza a contar (' + D.fechaMedia(p.inicio) + '), así que contaría pero no podrías verlo. ' +
+        'Cambia la fecha, o adelanta el inicio del presupuesto al editarlo. '
+      : 'Esta fecha queda fuera de «' + p.nombre + '», que ' +
+        (p.fin ? 'va del ' + D.fechaMedia(p.inicio) + ' al ' + D.fechaMedia(p.fin)
+          : 'empieza el ' + D.fechaMedia(p.inicio)) +
+        '. El gasto se guardaría pero no contaría ahí. ';
+
     return el('p.date-warning.is-fuera', [
-      'Esta fecha queda fuera de «' + p.nombre + '», que ' + rango + '. ' +
-      'El gasto se guardaría pero no contaría ahí. ',
+      explicacion,
       el('button.link-today', {
         type: 'button', text: 'Usar el ' + D.fechaMedia(arreglo),
         onclick: () => { b.fecha = arreglo; (alCambiar || App.render)(); }
