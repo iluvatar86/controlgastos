@@ -1,0 +1,833 @@
+/* ---------------------------------------------------------------------------
+   store.js — Los datos. Viven en el propio teléfono, en el almacenamiento del
+   navegador. No se sube nada a ningún sitio.
+
+   Dos decisiones que conviene entender antes de tocar nada:
+
+   1. Los CICLOS NO SE GUARDAN. Un presupuesto recurrente (la quincena del
+      salario) no tiene una lista de quincenas almacenadas: el ciclo al que
+      pertenece un gasto se calcula a partir de su fecha. Así no hay nada que
+      "cerrar" ni "abrir" cada quince días, y mirar una quincena vieja es
+      simplemente filtrar por fechas.
+
+   2. EL TIPO DE CAMBIO SE GUARDA EN CADA GASTO. Cuando se apunta una compra en
+      dólares dentro de un presupuesto en colones, se guarda el tipo de cambio
+      del día. Si mañana se cambia el tipo de cambio de la app, los gastos
+      antiguos no se mueven — que es lo correcto: ya se pagaron a aquel precio.
+--------------------------------------------------------------------------- */
+
+(function (global) {
+  'use strict';
+
+  const KEY = 'controlgastos.v1';
+
+  const CATEGORIAS = [
+    { key: 'supermercado', nombre: 'Supermercado', emoji: '🛒', color: '#4ADE80' },
+    { key: 'restaurante', nombre: 'Restaurante', emoji: '🍽️', color: '#FB923C' },
+    { key: 'farmacia', nombre: 'Farmacia', emoji: '💊', color: '#38BDF8' },
+    { key: 'combustible', nombre: 'Combustible', emoji: '⛽', color: '#FACC15' },
+    { key: 'suscripciones', nombre: 'Suscripciones', emoji: '🔁', color: '#818CF8' },
+    { key: 'uber-eats', nombre: 'Uber-Eats', emoji: '🛵', color: '#84CC16' },
+    { key: 'uberdidi-rides', nombre: 'UberDidi-Rides', emoji: '🚕', color: '#60A5FA' },
+    { key: 'quickpass', nombre: 'QuickPass', emoji: '🛣️', color: '#F59E0B' },
+    { key: 'amazon', nombre: 'Amazon', emoji: '🛍️', color: '#FDBA74' },
+    { key: 'transporte', nombre: 'Transporte', emoji: '🚌', color: '#A78BFA' },
+    { key: 'servicios', nombre: 'Servicios', emoji: '💡', color: '#22D3EE' },
+    { key: 'salud', nombre: 'Salud', emoji: '🏥', color: '#F472B6' },
+    { key: 'ocio', nombre: 'Ocio', emoji: '🎬', color: '#C084FC' },
+    { key: 'ropa', nombre: 'Ropa', emoji: '👕', color: '#FB7185' },
+    { key: 'hogar', nombre: 'Hogar', emoji: '🏠', color: '#34D399' },
+    { key: 'otros', nombre: 'Otros', emoji: '📦', color: '#94A3B8' }
+  ];
+
+  /* Sube este número al añadir categorías de fábrica nuevas.
+
+     Hace falta porque las categorías se copian a los datos del usuario la
+     primera vez y ahí se quedan: sin esto, quien ya tenga la app instalada no
+     vería nunca las nuevas. Y se hace UNA sola vez por número, para que
+     borrar una categoría a propósito no la resucite en el siguiente arranque. */
+  const SEMILLA = 2;
+
+  const COLORES_PRESUPUESTO = [
+    '#34D399', '#38BDF8', '#FBBF24', '#F472B6', '#A78BFA', '#FB923C', '#4ADE80', '#22D3EE'
+  ];
+
+  const EMPTY = {
+    version: 1,
+    presupuestos: [],
+    gastos: [],
+    categorias: JSON.parse(JSON.stringify(CATEGORIAS)),
+    ajustes: {
+      monedaPorDefecto: 'CRC',
+      tipoCambio: 510,          // colones por dólar; se edita en Ajustes
+      tipoCambioAlDia: null     // fecha en que se actualizó por última vez
+    },
+    gmail: {
+      clientId: '',             // el que se saca de Google Cloud; ver AJUSTES
+      remitentes: [],           // vacío = los de fábrica (Bancos.REMITENTES)
+      diasAtras: 30,            // hasta dónde mira hacia atrás la revisión a fondo
+      revisarAlAbrir: 'cada6h', // 'siempre' | 'cada6h' | 'nunca'
+      presupuestoPorDefecto: null,
+      ultimaRevision: null,
+      ultimoFallo: null         // por qué falló la última revisión automática
+    },
+    pendientes: [],             // gastos detectados en el correo, sin confirmar
+    huellas: []                 // los que ya se apuntaron o descartaron
+  };
+
+  let data = null;
+
+  function uid(prefix) {
+    return (prefix || 'id') + '-' + Date.now().toString(36) + '-' +
+      Math.random().toString(36).slice(2, 7);
+  }
+
+  function load() {
+    if (data) return data;
+    try {
+      const raw = localStorage.getItem(KEY);
+      data = raw ? JSON.parse(raw) : JSON.parse(JSON.stringify(EMPTY));
+    } catch (err) {
+      console.error('No se pudieron leer los datos guardados', err);
+      data = JSON.parse(JSON.stringify(EMPTY));
+    }
+    Object.keys(EMPTY).forEach((k) => { if (data[k] === undefined) data[k] = JSON.parse(JSON.stringify(EMPTY[k])); });
+    Object.keys(EMPTY.ajustes).forEach((k) => {
+      if (data.ajustes[k] === undefined) data.ajustes[k] = EMPTY.ajustes[k];
+    });
+    if (!data.categorias || !data.categorias.length) {
+      data.categorias = JSON.parse(JSON.stringify(CATEGORIAS));
+      data.semilla = SEMILLA;
+    }
+    migrar(data);
+    if (sembrarCategorias(data)) { save(); }
+    return data;
+  }
+
+  /* Añade las categorías de fábrica que hayan aparecido desde la última vez.
+     Devuelve si tocó algo, para guardarlo. «Otros» siempre va al final. */
+  function sembrarCategorias(d) {
+    if ((d.semilla || 1) >= SEMILLA) return false;
+    const tiene = {};
+    d.categorias.forEach((c) => { tiene[c.key] = true; });
+    CATEGORIAS.forEach((c) => {
+      if (!tiene[c.key]) d.categorias.push(JSON.parse(JSON.stringify(c)));
+    });
+    // «Otros» siempre al final: es el cajón de sastre, no una categoría más.
+    const otros = d.categorias.filter((c) => c.key === 'otros');
+    d.categorias = d.categorias.filter((c) => c.key !== 'otros').concat(otros);
+    d.semilla = SEMILLA;
+    return true;
+  }
+
+  /* Al principio un gasto pertenecía a un solo presupuesto (`presupuestoId`).
+     Ahora puede afectar a varios a la vez (`asignaciones`), porque una compra
+     del viaje sale además de la quincena. Las copias de seguridad antiguas se
+     convierten al abrirlas: no hay que hacer nada a mano. */
+  function migrar(d) {
+    (d.gastos || []).forEach((g) => {
+      if (!Array.isArray(g.asignaciones) || !g.asignaciones.length) {
+        g.asignaciones = [{ presupuestoId: g.presupuestoId || null, monto: Number(g.monto) || 0 }];
+      }
+      if (g.presupuestoId !== undefined) delete g.presupuestoId;
+    });
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(load()));
+      return true;
+    } catch (err) {
+      alert('No se han podido guardar los datos: el almacenamiento del teléfono está lleno. ' +
+        'Haz una copia de seguridad desde Ajustes y borra algún presupuesto antiguo.');
+      return false;
+    }
+  }
+
+  /* ---------- ajustes ------------------------------------------------------- */
+
+  function ajustes() { return load().ajustes; }
+
+  function setAjustes(cambios) {
+    Object.assign(load().ajustes, cambios);
+    save();
+  }
+
+  /* ---------- categorías ---------------------------------------------------- */
+
+  function categorias() { return load().categorias; }
+
+  function categoria(key) {
+    return load().categorias.find((c) => c.key === key) ||
+      { key: key || 'otros', nombre: 'Sin categoría', emoji: '❓', color: '#94A3B8' };
+  }
+
+  function claveDe(nombre) {
+    return (nombre || '').toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  }
+
+  function addCategoria(nombre, emoji, color) {
+    const d = load();
+    let key = claveDe(nombre) || uid('cat');
+    if (d.categorias.some((c) => c.key === key)) key = key + '-' + Math.random().toString(36).slice(2, 5);
+    const item = { key, nombre: nombre.trim(), emoji: emoji || '🏷️', color: color || '#94A3B8' };
+    d.categorias.push(item);
+    save();
+    return item;
+  }
+
+  function updateCategoria(key, cambios) {
+    const item = load().categorias.find((c) => c.key === key);
+    if (item) { Object.assign(item, cambios); save(); }
+    return item;
+  }
+
+  /* Al borrar una categoría los gastos que la usaban pasan a "Otros": borrar
+     una etiqueta no debe borrar dinero ni dejarlo huérfano. */
+  function deleteCategoria(key) {
+    const d = load();
+    if (key === 'otros') return false;
+    d.categorias = d.categorias.filter((c) => c.key !== key);
+    d.gastos.forEach((g) => { if (g.categoria === key) g.categoria = 'otros'; });
+    // Un tope de una categoría que ya no existe no se puede ni ver ni quitar.
+    d.presupuestos.forEach((p) => { if (p.limites) delete p.limites[key]; });
+    save();
+    return true;
+  }
+
+  /* ---------- presupuestos -------------------------------------------------- */
+
+  /* ---------- activo, vencido o desactivado ---------------------------------
+
+     Un presupuesto puede estar en tres estados, y solo uno de ellos se guarda:
+
+     - **activo** — el normal.
+     - **vencido** — se calcula, no se guarda: un presupuesto de una vez cuya
+       fecha de fin ya pasó. Se aparta solo, sin que haya que hacer nada.
+     - **desactivado** — se guarda (`archivado`). Lo apaga uno a mano cuando ya
+       no lo necesita.
+
+     Los dos últimos salen del Resumen y de las listas donde se elige, pero
+     **no se borra nada**: siguen enteros en el historial, se pueden consultar
+     y se les pueden seguir apuntando gastos. Desactivar no es borrar.
+  --------------------------------------------------------------------------- */
+
+  function vencido(pre) {
+    return !!pre && !pre.archivado && pre.tipo !== 'recurrente' &&
+      !!pre.fin && pre.fin < D.hoy();
+  }
+
+  function estadoDePresupuesto(pre) {
+    if (!pre) return 'activo';
+    if (pre.archivado) return 'desactivado';
+    if (vencido(pre)) return 'vencido';
+    return 'activo';
+  }
+
+  function estaActivo(pre) { return estadoDePresupuesto(pre) === 'activo'; }
+
+  /* Por defecto, solo los activos: es lo que hay que ofrecer para elegir y lo
+     que se enseña en el Resumen. Con `todos` en cierto salen también los
+     cerrados, que es lo que quiere el historial. */
+  function presupuestos(todos) {
+    const lista = load().presupuestos;
+    return todos ? lista.slice() : lista.filter(estaActivo);
+  }
+
+  function presupuestosCerrados() {
+    return load().presupuestos.filter((p) => !estaActivo(p));
+  }
+
+  function presupuesto(id) { return load().presupuestos.find((p) => p.id === id) || null; }
+
+  function archivar(id, apagar) {
+    const pre = presupuesto(id);
+    if (!pre) return null;
+    pre.archivado = !!apagar;
+    pre.archivadoEn = apagar ? D.hoy() : null;
+    save();
+    return pre;
+  }
+
+  /* Al abrir un presupuesto cerrado no sirve de nada caer en el periodo de
+     hoy, que estará vacío: se cae en el último que tuvo sentido. */
+  function fechaDeReferencia(pre) {
+    if (!pre) return D.hoy();
+    if (pre.archivado && pre.archivadoEn) return pre.archivadoEn;
+    if (vencido(pre)) return pre.fin;
+    return D.hoy();
+  }
+
+  function cicloDeReferencia(pre) { return cicloDe(pre, fechaDeReferencia(pre)); }
+
+  function addPresupuesto(borrador) {
+    const d = load();
+    const usados = d.presupuestos.length;
+    const item = Object.assign({
+      id: uid('pre'),
+      tipo: 'puntual',
+      periodo: 'quincenal',
+      cortes: [1, 16],          // solo se usa con periodo 'personalizado'
+      limites: {},              // { claveDeCategoria: tope por periodo }
+      moneda: d.ajustes.monedaPorDefecto,
+      color: COLORES_PRESUPUESTO[usados % COLORES_PRESUPUESTO.length],
+      emoji: '💰',
+      inicio: D.hoy(),
+      fin: null,
+      archivado: false,
+      creadoEn: D.hoy()
+    }, borrador);
+    item.monto = Number(item.monto) || 0;
+    d.presupuestos.push(item);
+    save();
+    return item;
+  }
+
+  function updatePresupuesto(id, cambios) {
+    const item = presupuesto(id);
+    if (!item) return null;
+    Object.assign(item, cambios);
+    if (cambios.monto !== undefined) item.monto = Number(cambios.monto) || 0;
+    save();
+    return item;
+  }
+
+  /* Borrar un presupuesto se lleva los gastos que sólo estaban en él: un gasto
+     sin presupuesto no significa nada. Los que además estaban en otro
+     presupuesto NO se borran; sólo dejan de contar en este. */
+  function deletePresupuesto(id) {
+    const d = load();
+    d.presupuestos = d.presupuestos.filter((p) => p.id !== id);
+    d.gastos.forEach((g) => {
+      g.asignaciones = asignaciones(g).filter((a) => a.presupuestoId !== id);
+    });
+    d.gastos = d.gastos.filter((g) => g.asignaciones.length);
+    save();
+  }
+
+  /* Cuántos gastos se llevaría por delante y cuántos sólo perderían este
+     presupuesto. Sirve para que el aviso de borrado diga la verdad. */
+  function impactoDeBorrar(id) {
+    let solos = 0;
+    let compartidos = 0;
+    load().gastos.forEach((g) => {
+      if (!estaEn(g, id)) return;
+      if (asignaciones(g).length > 1) compartidos++; else solos++;
+    });
+    return { solos, compartidos };
+  }
+
+  /* ---------- ciclos -------------------------------------------------------- */
+
+  /* En Costa Rica la quincena del salario va del 1 al 15 y del 16 al último día
+     del mes, que es como pagan las empresas. No son "quince días desde que
+     empezó el presupuesto". */
+  function cicloDe(pre, fechaIso) {
+    if (!pre) return null;
+    const f = fechaIso || D.hoy();
+
+    if (pre.tipo !== 'recurrente') {
+      return {
+        inicio: pre.inicio,
+        fin: pre.fin || null,
+        etiqueta: pre.fin ? D.fechaCorta(pre.inicio) + ' – ' + D.fechaCorta(pre.fin) : 'Desde ' + D.fecha(pre.inicio),
+        unico: true
+      };
+    }
+
+    const date = D.deIso(f);
+    const anio = date.getFullYear();
+    const mes = date.getMonth() + 1;
+    const dia = date.getDate();
+    const ultimo = D.ultimoDiaDelMes(anio, mes);
+    const dos = (n) => String(n).padStart(2, '0');
+
+    if (pre.periodo === 'semanal') {
+      // La semana empieza el lunes. getDay() da 0 para el domingo.
+      const desplazamiento = (date.getDay() + 6) % 7;
+      const inicio = D.sumarDias(f, -desplazamiento);
+      const fin = D.sumarDias(inicio, 6);
+      return { inicio, fin, etiqueta: 'Semana del ' + D.fechaCorta(inicio) };
+    }
+
+    if (pre.periodo === 'mensual') {
+      const inicio = anio + '-' + dos(mes) + '-01';
+      const fin = anio + '-' + dos(mes) + '-' + dos(ultimo);
+      return { inicio, fin, etiqueta: D.nombreMes(mes) + ' ' + anio };
+    }
+
+    if (pre.periodo === 'personalizado') return cicloPersonalizado(pre, f);
+
+    // quincenal
+    if (dia <= 15) {
+      return {
+        inicio: anio + '-' + dos(mes) + '-01',
+        fin: anio + '-' + dos(mes) + '-15',
+        etiqueta: '1 – 15 ' + D.nombreMes(mes)
+      };
+    }
+    return {
+      inicio: anio + '-' + dos(mes) + '-16',
+      fin: anio + '-' + dos(mes) + '-' + dos(ultimo),
+      etiqueta: '16 – ' + ultimo + ' ' + D.nombreMes(mes)
+    };
+  }
+
+  /* Periodos que empiezan en los días del mes que uno elija.
+
+     No todas las quincenas van del 1 al 15: pueden ir del 3 al 17 y del 18 al
+     2 del mes siguiente. Con `cortes: [3, 18]` sale exactamente eso. Un solo
+     corte da periodos mensuales que empiezan ese día; tres o más cortes
+     también valen.
+
+     Un corte que no existe en ese mes (31 en febrero) se recoge al último día
+     del mes, que es lo que hace todo el mundo. */
+  function cortesDe(pre) {
+    const lista = (pre.cortes || [])
+      .map((n) => Math.min(31, Math.max(1, Math.round(Number(n) || 0))))
+      .filter((n) => n >= 1);
+    const unicos = lista.filter((n, i) => lista.indexOf(n) === i).sort((a, b) => a - b);
+    return unicos.length ? unicos : [1];
+  }
+
+  function cicloPersonalizado(pre, fechaIso) {
+    const cortes = cortesDe(pre);
+    const date = D.deIso(fechaIso);
+    const anio = date.getFullYear();
+    const mes = date.getMonth() + 1;
+
+    // Todas las fechas de corte del mes anterior, este y el siguiente, en
+    // orden. Con eso se sabe entre qué dos cortes cae la fecha, aunque el
+    // periodo se salte de un mes al otro.
+    const marcas = [];
+    [-1, 0, 1].forEach((salto) => {
+      const m = ((mes - 1 + salto) + 12) % 12 + 1;
+      const a = anio + Math.floor((mes - 1 + salto) / 12);
+      const ultimo = D.ultimoDiaDelMes(a, m);
+      cortes.forEach((c) => {
+        marcas.push(a + '-' + String(m).padStart(2, '0') + '-' + String(Math.min(c, ultimo)).padStart(2, '0'));
+      });
+    });
+    marcas.sort();
+
+    let inicio = marcas[0];
+    let fin = null;
+    for (let i = 0; i < marcas.length; i++) {
+      if (marcas[i] <= fechaIso) inicio = marcas[i];
+      else { fin = D.sumarDias(marcas[i], -1); break; }
+    }
+    if (!fin) fin = D.sumarDias(inicio, 30);
+
+    return {
+      inicio: inicio,
+      fin: fin,
+      etiqueta: D.fechaCorta(inicio) + ' – ' + D.fechaCorta(fin)
+    };
+  }
+
+  function cicloActual(pre) { return cicloDe(pre, D.hoy()); }
+
+  /* Salta al ciclo anterior (-1) o al siguiente (+1). Se apoya en cicloDe con
+     una fecha del ciclo vecino, para no repetir aquí las reglas del calendario. */
+  function cicloVecino(pre, ciclo, direccion) {
+    if (!pre || pre.tipo !== 'recurrente' || !ciclo) return null;
+    const f = direccion < 0 ? D.sumarDias(ciclo.inicio, -1) : D.sumarDias(ciclo.fin, 1);
+    if (direccion < 0 && f < pre.inicio) return null;
+    return cicloDe(pre, f);
+  }
+
+  function enCiclo(gasto, ciclo) {
+    if (!ciclo) return true;
+    if (ciclo.inicio && gasto.fecha < ciclo.inicio) return false;
+    if (ciclo.fin && gasto.fecha > ciclo.fin) return false;
+    return true;
+  }
+
+  /* ---------- gastos -------------------------------------------------------- */
+
+  function gastos() { return load().gastos; }
+
+  /* Convierte un importe de una moneda a otra con el tipo de cambio que se
+     guardó en el gasto. Ese tipo se estampa al crearlo y no se vuelve a tocar:
+     la compra ya se pagó a aquel precio. */
+  function convertir(monto, desde, hasta, tipoCambio) {
+    const n = Number(monto) || 0;
+    if (desde === hasta) return n;
+    const tc = Number(tipoCambio) || Number(ajustes().tipoCambio) || 1;
+    if (desde === 'USD' && hasta === 'CRC') return D.redondear(n * tc, 'CRC');
+    if (desde === 'CRC' && hasta === 'USD') return D.redondear(n / tc, 'USD');
+    return n;
+  }
+
+  /* El importe total del gasto: lo que se pagó de verdad. Para los totales
+     generales se cuenta UNA vez, aunque el gasto afecte a dos presupuestos. */
+  function montoEnMonedaDe(gasto, moneda) {
+    return convertir(gasto.monto, gasto.moneda, moneda, gasto.tipoCambio);
+  }
+
+  /* ---------- un gasto en varios presupuestos ------------------------------- */
+
+  /* `asignaciones` dice cuánto se come el gasto de cada presupuesto, en la
+     moneda del propio gasto. Hay dos formas de usarlo y las dos son legítimas:
+
+     - **Completo en cada uno**: la cena del viaje sale de la quincena y además
+       cuenta contra el presupuesto de Orlando. Los dos importes son el total.
+     - **Repartido**: de una compra de ₡30.000, ₡20.000 son de la casa y
+       ₡10.000 del viaje. Los importes suman el total.
+
+     Lo que nunca se hace es sumar dos veces en los totales generales: esos
+     usan `gasto.monto`, que es lo que salió del bolsillo. */
+  function asignaciones(gasto) {
+    return Array.isArray(gasto.asignaciones) ? gasto.asignaciones : [];
+  }
+
+  function presupuestosDe(gasto) {
+    return asignaciones(gasto).map((a) => a.presupuestoId).filter(Boolean);
+  }
+
+  function primerPresupuesto(gasto) {
+    const lista = presupuestosDe(gasto);
+    return lista.length ? lista[0] : null;
+  }
+
+  function estaEn(gasto, presupuestoId) {
+    return asignaciones(gasto).some((a) => a.presupuestoId === presupuestoId);
+  }
+
+  /* Lo que este gasto le quita a ESTE presupuesto, en la moneda del presupuesto. */
+  function montoAsignadoEn(gasto, presupuestoId, moneda) {
+    const a = asignaciones(gasto).find((x) => x.presupuestoId === presupuestoId);
+    if (!a) return 0;
+    return convertir(a.monto, gasto.moneda, moneda, gasto.tipoCambio);
+  }
+
+  /* Deja las asignaciones en forma válida: sin presupuestos que ya no existen,
+     sin repetidos y con importes numéricos. Si se queda sin ninguna, se le
+     pone el gasto entero en el primer presupuesto que haya, para que nunca
+     exista un gasto huérfano. */
+  function limpiarAsignaciones(lista, montoTotal) {
+    const vistos = {};
+    const salida = [];
+    (lista || []).forEach((a) => {
+      const id = a && a.presupuestoId;
+      if (!id || vistos[id] || !presupuesto(id)) return;
+      vistos[id] = true;
+      salida.push({ presupuestoId: id, monto: Number(a.monto) || 0 });
+    });
+    if (!salida.length) {
+      // Se prefiere uno activo: dejar el gasto colgando de un presupuesto
+      // cerrado lo haría desaparecer del Resumen sin motivo.
+      const primero = presupuestos()[0] || load().presupuestos[0];
+      if (primero) salida.push({ presupuestoId: primero.id, monto: Number(montoTotal) || 0 });
+    }
+    return salida;
+  }
+
+  function gastosDe(presupuestoId, ciclo) {
+    return load().gastos
+      .filter((g) => estaEn(g, presupuestoId))
+      .filter((g) => enCiclo(g, ciclo))
+      .sort((a, b) => (b.fecha === a.fecha ? (b.ts || 0) - (a.ts || 0) : b.fecha.localeCompare(a.fecha)));
+  }
+
+  function gasto(id) { return load().gastos.find((g) => g.id === id) || null; }
+
+  function addGasto(entrada) {
+    const d = load();
+    const item = Object.assign({
+      id: uid('gas'),
+      moneda: d.ajustes.monedaPorDefecto,
+      categoria: 'otros',
+      comercio: '',
+      nota: '',
+      fecha: D.hoy(),
+      origen: 'manual',
+      ts: Date.now()
+    }, entrada);
+    item.monto = Number(item.monto) || 0;
+    // El tipo de cambio se estampa siempre, haga falta convertir o no: mañana
+    // el gasto puede acabar en un presupuesto de la otra moneda.
+    item.tipoCambio = Number(item.tipoCambio) || Number(d.ajustes.tipoCambio) || 1;
+    item.asignaciones = limpiarAsignaciones(item.asignaciones, item.monto);
+    d.gastos.push(item);
+    save();
+    return item;
+  }
+
+  function updateGasto(id, cambios) {
+    const item = gasto(id);
+    if (!item) return null;
+    Object.assign(item, cambios);
+    item.monto = Number(item.monto) || 0;
+    item.tipoCambio = Number(item.tipoCambio) || Number(ajustes().tipoCambio) || 1;
+    item.asignaciones = limpiarAsignaciones(item.asignaciones, item.monto);
+    save();
+    return item;
+  }
+
+  function deleteGasto(id) {
+    const d = load();
+    d.gastos = d.gastos.filter((g) => g.id !== id);
+    save();
+  }
+
+  /* ---------- saldos -------------------------------------------------------- */
+
+  /* El resumen de un presupuesto dentro de un ciclo: cuánto había, cuánto se
+     ha gastado, cuánto queda y a qué ritmo se puede gastar lo que queda. */
+  function resumen(pre, ciclo) {
+    const c = ciclo || cicloActual(pre);
+    const lista = gastosDe(pre.id, c);
+    const gastado = D.redondear(
+      lista.reduce((suma, g) => suma + montoAsignadoEn(g, pre.id, pre.moneda), 0), pre.moneda);
+    const asignado = Number(pre.monto) || 0;
+    const disponible = D.redondear(asignado - gastado, pre.moneda);
+
+    const hoy = D.hoy();
+    let diasTotales = null;
+    let diasRestantes = null;
+    let porDia = null;
+
+    if (c && c.inicio && c.fin) {
+      diasTotales = D.diasEntre(c.inicio, c.fin);
+      if (hoy > c.fin) diasRestantes = 0;
+      else if (hoy < c.inicio) diasRestantes = diasTotales;
+      else diasRestantes = D.diasEntre(hoy, c.fin);
+      if (diasRestantes > 0 && disponible > 0) porDia = D.redondear(disponible / diasRestantes, pre.moneda);
+    }
+
+    return {
+      ciclo: c,
+      gastos: lista,
+      numGastos: lista.length,
+      asignado,
+      gastado,
+      disponible,
+      consumido: D.porcentaje(gastado, asignado),
+      excedido: gastado > asignado,
+      diasTotales,
+      diasRestantes,
+      porDia
+    };
+  }
+
+  /* ---------- límites por categoría ----------------------------------------- */
+
+  /* A partir de este porcentaje se avisa en ámbar. El mismo número se usa para
+     la barra del presupuesto entero y para la de cada categoría: si fueran
+     distintos, dos barras igual de llenas tendrían colores distintos y no se
+     entendería por qué. */
+  const AVISO = 85;
+
+  function estadoDeTope(gastado, tope) {
+    if (!tope) return 'ok';
+    if (gastado >= tope) return 'pasado';
+    return D.porcentaje(gastado, tope) >= AVISO ? 'aviso' : 'ok';
+  }
+
+  /* Los topes van por PERIODO, igual que el dinero del presupuesto: «del 3 al
+     17 puedo gastar ₡15.000 en restaurantes» vuelve a empezar cada quincena.
+     En un presupuesto de una vez hay un solo periodo, así que el tope vale
+     para todo él. */
+  function limitesDe(pre, ciclo) {
+    const topes = (pre && pre.limites) || {};
+    const claves = Object.keys(topes).filter((k) => Number(topes[k]) > 0);
+    if (!claves.length) return [];
+
+    const porClave = {};
+    gastosDe(pre.id, ciclo).forEach((g) => {
+      const k = g.categoria || 'otros';
+      porClave[k] = (porClave[k] || 0) + montoAsignadoEn(g, pre.id, pre.moneda);
+    });
+
+    return claves.map((k) => {
+      const tope = Number(topes[k]);
+      const gastado = D.redondear(porClave[k] || 0, pre.moneda);
+      return Object.assign({}, categoria(k), {
+        limite: tope,
+        gastado: gastado,
+        restante: D.redondear(tope - gastado, pre.moneda),
+        consumido: D.porcentaje(gastado, tope),
+        estado: estadoDeTope(gastado, tope)
+      });
+    }).sort((a, b) => b.consumido - a.consumido);
+  }
+
+  /* El tope de UNA categoría, para avisar en el momento de apuntar el gasto.
+     Devuelve null si esa categoría no tiene tope en ese presupuesto. */
+  function limiteDe(pre, claveCategoria, ciclo) {
+    if (!pre || !pre.limites || !Number(pre.limites[claveCategoria])) return null;
+    return limitesDe(pre, ciclo).find((l) => l.key === claveCategoria) || null;
+  }
+
+  /* Para la tarjeta de la lista: si algo va mal, que se vea sin entrar. */
+  function avisoDeLimites(pre, ciclo) {
+    const lista = limitesDe(pre, ciclo);
+    if (!lista.length) return null;
+    const pasados = lista.filter((l) => l.estado === 'pasado').length;
+    const cerca = lista.filter((l) => l.estado === 'aviso').length;
+    if (!pasados && !cerca) return null;
+    return { pasados, cerca, estado: pasados ? 'pasado' : 'aviso' };
+  }
+
+  function setLimite(presupuestoId, claveCategoria, monto) {
+    const pre = presupuesto(presupuestoId);
+    if (!pre) return null;
+    if (!pre.limites) pre.limites = {};
+    const n = Number(monto) || 0;
+    if (n > 0) pre.limites[claveCategoria] = n;
+    else delete pre.limites[claveCategoria];
+    save();
+    return pre;
+  }
+
+  /* Reparto por categoría dentro de un ciclo, de mayor a menor. */
+  function porCategoria(pre, ciclo) {
+    const lista = gastosDe(pre.id, ciclo);
+    const mapa = {};
+    lista.forEach((g) => {
+      const key = g.categoria || 'otros';
+      mapa[key] = (mapa[key] || 0) + montoAsignadoEn(g, pre.id, pre.moneda);
+    });
+    return Object.keys(mapa)
+      .map((key) => Object.assign({}, categoria(key), { total: D.redondear(mapa[key], pre.moneda) }))
+      .sort((a, b) => b.total - a.total);
+  }
+
+  /* Gasto acumulado día a día dentro del ciclo. Alimenta el gráfico. */
+  function porDia(pre, ciclo) {
+    const c = ciclo || cicloActual(pre);
+    if (!c || !c.inicio) return [];
+    const finReal = c.fin || D.hoy();
+    const lista = gastosDe(pre.id, c);
+    const mapa = {};
+    const cuantos = {};
+    lista.forEach((g) => {
+      mapa[g.fecha] = (mapa[g.fecha] || 0) + montoAsignadoEn(g, pre.id, pre.moneda);
+      cuantos[g.fecha] = (cuantos[g.fecha] || 0) + 1;
+    });
+
+    const dias = [];
+    let acumulado = 0;
+    let cursor = c.inicio;
+    let guardia = 0;
+    while (cursor <= finReal && guardia++ < 400) {
+      acumulado += mapa[cursor] || 0;
+      dias.push({
+        fecha: cursor,
+        total: D.redondear(mapa[cursor] || 0, pre.moneda),
+        n: cuantos[cursor] || 0,
+        acumulado: D.redondear(acumulado, pre.moneda)
+      });
+      cursor = D.sumarDias(cursor, 1);
+    }
+    return dias;
+  }
+
+  /* ---------- gmail y bandeja de pendientes --------------------------------- */
+
+  function gmail() { return load().gmail; }
+
+  function setGmail(cambios) {
+    Object.assign(load().gmail, cambios);
+    save();
+  }
+
+  /* Sin lista propia se usan los remitentes de fábrica. Se guarda vacío en vez
+     de copiarlos para que, si mañana se corrige una dirección en bancos.js, la
+     corrección llegue sola a quien no la haya tocado. */
+  function remitentes() {
+    const propios = load().gmail.remitentes;
+    return (propios && propios.length) ? propios : Bancos.REMITENTES.slice();
+  }
+
+  function pendientes() { return load().pendientes; }
+
+  function pendiente(id) { return load().pendientes.find((p) => p.id === id) || null; }
+
+  /* Devuelve false si ese movimiento ya se había apuntado, descartado o estaba
+     esperando en la bandeja. Es lo que impide que el mismo gasto entre dos
+     veces cuando el banco reenvía el aviso. */
+  function addPendiente(datos) {
+    const d = load();
+    const huella = Bancos.huellaDe(datos);
+    if (d.huellas.indexOf(huella) >= 0) return false;
+    if (d.pendientes.some((p) => p.huella === huella)) return false;
+    d.pendientes.push(Object.assign({ id: uid('pen'), huella: huella, visto: nowIso() }, datos));
+    save();
+    return true;
+  }
+
+  /* Quitar de la bandeja y recordar la huella, tanto si se apunta como si se
+     descarta: en los dos casos ya está decidido y no debe volver a aparecer. */
+  function cerrarPendiente(id) {
+    const d = load();
+    const item = pendiente(id);
+    if (!item) return;
+    if (item.huella && d.huellas.indexOf(item.huella) < 0) d.huellas.push(item.huella);
+    if (d.huellas.length > 2000) d.huellas = d.huellas.slice(-2000);
+    d.pendientes = d.pendientes.filter((p) => p.id !== id);
+    save();
+  }
+
+  function nowIso() {
+    const now = new Date();
+    return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString();
+  }
+
+  /* ---------- copia de seguridad -------------------------------------------- */
+
+  function exportAll() { return JSON.stringify(load(), null, 2); }
+
+  function importAll(json) {
+    const parsed = JSON.parse(json);
+    if (!parsed || !Array.isArray(parsed.presupuestos) || !Array.isArray(parsed.gastos)) {
+      throw new Error('El archivo de copia no tiene el formato esperado.');
+    }
+    data = parsed;
+    Object.keys(EMPTY).forEach((k) => { if (data[k] === undefined) data[k] = JSON.parse(JSON.stringify(EMPTY[k])); });
+    if (!data.categorias || !data.categorias.length) data.categorias = JSON.parse(JSON.stringify(CATEGORIAS));
+    // Hay que convertir aquí también, y no solo al abrir la app: una copia
+    // guardada hace meses trae los gastos en el formato antiguo —y las
+    // categorías de entonces— y `load` ya no vuelve a pasar por aquí.
+    migrar(data);
+    sembrarCategorias(data);
+    save();
+  }
+
+  function clearAll() {
+    data = JSON.parse(JSON.stringify(EMPTY));
+    save();
+  }
+
+  function stats() {
+    const d = load();
+    return {
+      presupuestos: d.presupuestos.length,
+      gastos: d.gastos.length,
+      categorias: d.categorias.length,
+      pendientes: d.pendientes.length,
+      sizeKb: Math.round((localStorage.getItem(KEY) || '').length / 1024)
+    };
+  }
+
+  global.Store = {
+    uid, load, save, claveDe,
+    ajustes, setAjustes,
+    categorias, categoria, addCategoria, updateCategoria, deleteCategoria,
+    presupuestos, presupuesto, addPresupuesto, updatePresupuesto, deletePresupuesto, impactoDeBorrar,
+    presupuestosCerrados, estadoDePresupuesto, estaActivo, vencido, archivar,
+    fechaDeReferencia, cicloDeReferencia,
+    cicloDe, cicloActual, cicloVecino, enCiclo, cortesDe,
+    gastos, gasto, gastosDe, addGasto, updateGasto, deleteGasto, montoEnMonedaDe,
+    asignaciones, presupuestosDe, primerPresupuesto, estaEn, montoAsignadoEn, convertir,
+    gmail, setGmail, remitentes, pendientes, pendiente, addPendiente, cerrarPendiente,
+    resumen, porCategoria, porDia,
+    limitesDe, limiteDe, avisoDeLimites, setLimite, estadoDeTope, AVISO,
+    exportAll, importAll, clearAll, stats,
+    COLORES_PRESUPUESTO
+  };
+
+})(window);
