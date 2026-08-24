@@ -429,12 +429,35 @@
 
   function cicloActual(pre) { return cicloDe(pre, D.hoy()); }
 
+  /* Hasta dónde se puede retroceder en un presupuesto que se repite.
+
+     Sale de los datos, no de un ajuste: el gasto más antiguo que tenga. Antes
+     había un campo «empieza a contar desde» que sólo servía para esto, venía
+     con la fecha de hoy y, de fábrica, impedía mirar las quincenas anteriores
+     —justo donde caen los gastos que trae la primera revisión del correo—.
+     Así no hay nada que configurar y no hay forma de equivocarse: si existe un
+     gasto de julio, julio se puede visitar; si no hay ninguno, no hay adónde ir.
+
+     `inicio` se sigue guardando (es la fecha de alta y en los presupuestos de
+     una vez sí define el periodo), pero en los recurrentes ya no limita nada. */
+  function limiteAtras(pre) {
+    let masViejo = null;
+    load().gastos.forEach((g) => {
+      if (!estaEn(g, pre.id)) return;
+      if (masViejo === null || g.fecha < masViejo) masViejo = g.fecha;
+    });
+    return masViejo;
+  }
+
   /* Salta al ciclo anterior (-1) o al siguiente (+1). Se apoya en cicloDe con
      una fecha del ciclo vecino, para no repetir aquí las reglas del calendario. */
   function cicloVecino(pre, ciclo, direccion) {
     if (!pre || pre.tipo !== 'recurrente' || !ciclo) return null;
     const f = direccion < 0 ? D.sumarDias(ciclo.inicio, -1) : D.sumarDias(ciclo.fin, 1);
-    if (direccion < 0 && f < pre.inicio) return null;
+    if (direccion < 0) {
+      const tope = limiteAtras(pre);
+      if (!tope || f < tope) return null;
+    }
     return cicloDe(pre, f);
   }
 
@@ -820,7 +843,7 @@
     presupuestos, presupuesto, addPresupuesto, updatePresupuesto, deletePresupuesto, impactoDeBorrar,
     presupuestosCerrados, estadoDePresupuesto, estaActivo, vencido, archivar,
     fechaDeReferencia, cicloDeReferencia,
-    cicloDe, cicloActual, cicloVecino, enCiclo, cortesDe,
+    cicloDe, cicloActual, cicloVecino, enCiclo, cortesDe, limiteAtras,
     gastos, gasto, gastosDe, addGasto, updateGasto, deleteGasto, montoEnMonedaDe,
     asignaciones, presupuestosDe, primerPresupuesto, estaEn, montoAsignadoEn, convertir,
     gmail, setGmail, remitentes, pendientes, pendiente, addPendiente, cerrarPendiente,
