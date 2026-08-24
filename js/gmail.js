@@ -68,6 +68,16 @@
         'Falta el identificador de Google. Se pone en Ajustes → Conectar con Gmail.'));
     }
 
+    /* Si no tiene ni la forma, no vale la pena ir a Google: contestaría
+       «Error 401: invalid_client» en una pantalla suya que no explica nada.
+       Mejor decirlo aquí, donde está el campo que hay que corregir. */
+    if (!/^\d+-[A-Za-z0-9_.-]+\.apps\.googleusercontent\.com$/.test(clientId)) {
+      return Promise.reject(new Error(
+        'El identificador de Google no tiene la forma correcta: debe acabar en ' +
+        '«.apps.googleusercontent.com». Revísalo en Ajustes; lo más probable es que ' +
+        'se cortara al pegarlo.'));
+    }
+
     return cargarConector().then(() => new Promise((cumplir, fallar) => {
       const cliente = google.accounts.oauth2.initTokenClient({
         client_id: clientId,
@@ -91,7 +101,7 @@
     if (c === 'popup_closed' || c === 'popup_closed_by_user') return 'Se cerró la ventana de Google sin dar el permiso.';
     if (c === 'popup_failed_to_open') return 'El navegador ha bloqueado la ventana de Google. Vuelve a pulsar el botón.';
     if (c === 'access_denied') return 'Google no ha dado el permiso. Si la app está en modo de pruebas, tu cuenta tiene que estar en la lista de usuarios de prueba.';
-    if (c === 'invalid_client') return 'El identificador de Google (Client ID) no es válido. Revísalo en Ajustes.';
+    if (c === 'invalid_client') return 'Google no reconoce este identificador. Cópialo otra vez desde Google Cloud → Clients: suele ser que se cortó al pegarlo, o que se pegó el «Client secret» en su lugar.';
     return 'Google no ha dado el permiso' + (c ? ' (' + c + ').' : '.');
   }
 

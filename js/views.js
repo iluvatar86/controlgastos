@@ -1566,6 +1566,39 @@
 
   /* ---------- ajustes de Gmail ---------------------------------------------- */
 
+  /* Un identificador mal pegado no da la cara hasta que Google contesta
+     «Error 401: invalid_client» en una pantalla suya, que no explica nada y
+     deja a uno sin saber qué mirar. Pegar esto en el móvil es fácil de fallar
+     —son sesenta y pico caracteres— así que se revisa aquí mismo la forma y se
+     dice qué falla en concreto.
+
+     No impide guardarlo: si algún día Google cambia el formato, más vale un
+     aviso que se pueda ignorar que un campo que no deje escribir. */
+  const FORMA_CLIENT_ID = /^\d+-[A-Za-z0-9_.-]+\.apps\.googleusercontent\.com$/;
+
+  function avisoDelClientId(valor) {
+    const v = (valor || '').trim();
+    if (!v || FORMA_CLIENT_ID.test(v)) return null;
+
+    let motivo;
+    if (/^GOCSPX-/i.test(v)) {
+      motivo = 'Eso es el «Client secret», no el «Client ID». Hace falta el otro, el largo que ' +
+        'acaba en .apps.googleusercontent.com — el secret esta app no lo usa.';
+    } else if (v.indexOf('.apps.googleusercontent.com') < 0) {
+      motivo = 'Un identificador de Google acaba siempre en «.apps.googleusercontent.com», y éste no. ' +
+        'Lo más probable es que la copia se cortara: vuelve a copiarlo entero desde Google Cloud.';
+    } else if (/\s/.test(v)) {
+      motivo = 'Se ha colado un espacio o un salto de línea. Cópialo otra vez.';
+    } else {
+      motivo = 'Esto no tiene la forma de un identificador de Google, que son unos números, un guion, ' +
+        'letras y «.apps.googleusercontent.com» al final.';
+    }
+
+    return el('p.revision-estado.is-error', {
+      text: motivo + ' (Ahora hay ' + v.length + ' caracteres; suelen ser unos 70.)'
+    });
+  }
+
   function gmailAjustes() {
     const g = Store.gmail();
     const pendientes = Store.pendientes().length;
@@ -1627,8 +1660,10 @@
 
         campo('Identificador de Google (Client ID)', inClientId,
           g.clientId
-            ? 'Guardado. Si lo cambias, se guarda solo.'
+            ? 'Guardado, ' + g.clientId.length + ' caracteres. Si lo cambias, se guarda solo.'
             : 'Pega aquí el código que acaba en .apps.googleusercontent.com. Se saca una vez desde Google Cloud.'),
+
+        avisoDelClientId(g.clientId),
 
         g.clientId ? el('div.field', [
           el('span', { text: '¿Revisar el correo sola al abrir la app?' }),
