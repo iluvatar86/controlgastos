@@ -291,13 +291,24 @@
       .then(() => api('/messages?maxResults=' + MAXIMO_CORREOS + '&q=' + encodeURIComponent(consulta())))
       .then((lista) => {
         const ids = lista.messages || [];
-        const cuenta = { total: ids.length, nuevos: 0, repetidos: 0, noReconocidos: 0 };
+        /* `deHoy` se cuenta para poder distinguir tres cosas que desde fuera se
+           ven igual («no aparece la compra de hoy») y se arreglan de formas
+           distintas:
+
+           - 0 correos de hoy → el correo no está llegando a la búsqueda. El
+             banco escribe desde otra dirección, o hay un filtro en Gmail.
+           - varios de hoy y varios sin reconocer → es el lector, que no entiende
+             ese formato. Se ve cuál en la lista de abajo y se arregla.
+           - varios de hoy y todos «ya estaban» → se están descartando como
+             repetidos sin serlo. */
+        const cuenta = { total: ids.length, deHoy: 0, nuevos: 0, repetidos: 0, noReconocidos: 0 };
 
         // De uno en uno a propósito: lanzar cien peticiones a la vez hace que
         // Google devuelva errores de "demasiadas peticiones".
         return ids.reduce((cadena, item, i) => cadena.then(() => {
           if (alAvanzar) alAvanzar(i + 1, ids.length);
           return api('/messages/' + item.id + '?format=full').then((mensaje) => {
+            if (fechaDelCorreo(mensaje) === D.hoy()) cuenta.deHoy++;
             const cuerpo = cuerpoDe(mensaje.payload);
             const datos = Bancos.leer({
               de: cabecera(mensaje.payload, 'From'),
@@ -416,12 +427,21 @@
   }
 
   function resumenLegible(c) {
-    if (!c.total) return 'No hay ningún correo nuevo de los bancos.';
+    if (!c.total) {
+      return 'No ha aparecido ningún correo de los bancos de la lista en los últimos ' +
+        ventanaDeRevision().dias + ' días.';
+    }
     const partes = [];
     partes.push(c.nuevos ? c.nuevos + (c.nuevos === 1 ? ' gasto nuevo' : ' gastos nuevos') : 'ningún gasto nuevo');
     if (c.repetidos) partes.push(c.repetidos + ' ya estaban');
     if (c.noReconocidos) partes.push(c.noReconocidos + ' sin reconocer');
-    return 'Revisados ' + c.total + ' correos: ' + partes.join(', ') + '.';
+
+    // Cuántos eran de hoy: es el dato que dice si el problema está en que el
+    // correo no llega o en que no se sabe leer.
+    const hoy = c.deHoy === 0 ? 'ninguno de hoy'
+      : (c.deHoy === 1 ? '1 de hoy' : c.deHoy + ' de hoy');
+
+    return 'Revisados ' + c.total + ' correos (' + hoy + '): ' + partes.join(', ') + '.';
   }
 
   function bandeja() {

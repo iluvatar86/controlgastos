@@ -1,0 +1,4 @@
+# Carpeta de pruebas con correos reales del banco: lleva nombre, comercios y los
+# ultimos digitos de las tarjetas. NUNCA puede subirse a un repositorio publico.
+# Se usa solo en local para probar los lectores de bancos.js.
+_pruebas/
