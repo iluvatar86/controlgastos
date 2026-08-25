@@ -14,6 +14,11 @@
   const EMOJIS_CATEGORIA = ['🛒', '🍽️', '💊', '⛽', '🚌', '💡', '🏥', '🎬', '👕', '🏠', '📦',
     '🏫', '🏦', '☕', '🎮', '📚', '🐶', '💇', '🧾', '🎂', '🏋️', '🎧'];
 
+  /* Guía de configuración de la conexión con Gmail. Vive fuera de la app a
+     propósito: son pantallas de Google que cambian de sitio cada pocos meses,
+     y así se corrige sin tener que publicar la app otra vez. */
+  const GUIA_GMAIL = 'https://claude.ai/code/artifact/8febf01b-59cc-4ae0-a17c-0f0435ae4550';
+
   /* ---------- piezas sueltas ------------------------------------------------ */
 
   function header(titulo, sub, extra) {
@@ -1657,6 +1662,18 @@
           text: 'Funciona con BAC Credomatic, Davivienda y Promerica, y necesita un identificador de Google ' +
             'que tienes que crear tú en tu propia cuenta. Mientras no lo pongas, la app no habla con Google en ningún momento.'
         }),
+
+        el('a.link-guia', {
+          href: GUIA_GMAIL,
+          target: '_blank',
+          rel: 'noopener noreferrer'
+        }, [
+          el('span.link-guia-texto', [
+            el('strong', { text: 'Cómo conectarlo, paso a paso' }),
+            el('span', { text: 'Diez minutos, gratis, se hace una sola vez' })
+          ]),
+          el('span.link-guia-flecha', { text: '↗', 'aria-hidden': 'true' })
+        ]),
 
         campo('Identificador de Google (Client ID)', inClientId,
           g.clientId

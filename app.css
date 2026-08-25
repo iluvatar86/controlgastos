@@ -1007,6 +1007,23 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 
 .avanzado-body .muted { font-size: .8125rem; line-height: 1.5; }
 
+.link-guia {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+}
+
+.link-guia:active { background: rgba(52, 211, 153, .24); }
+
+.link-guia-texto { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.link-guia-texto strong { font-size: .9375rem; font-weight: 650; }
+.link-guia-texto span { font-size: .75rem; color: var(--muted); }
+.link-guia-flecha { flex: none; color: var(--accent); font-size: 1.1rem; line-height: 1; }
+
 .tech { font-size: .8125rem; color: var(--muted); }
 .tech summary { cursor: pointer; padding: 8px 0; list-style: none; }
 .tech summary::-webkit-details-marker { display: none; }
