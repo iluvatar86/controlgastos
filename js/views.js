@@ -2123,10 +2123,12 @@
               'Solo la primera vez. A partir de ahí cada revisión mira los últimos ' +
               Gmail.DIAS_MINIMOS + ' días, y estira más si llevabas tiempo sin abrir la app.'),
             el('div.field', [
-              el('span', { text: 'Remitentes que se buscan (uno por línea)' }),
+              el('span', { text: 'Dominios que se buscan (uno por línea)' }),
               inRemitentes,
               el('small.field-help', {
-                text: 'De fábrica vienen BAC Credomatic, Davivienda y Promerica. Si lo dejas vacío vuelven los de fábrica.'
+                text: 'De fábrica vienen BAC Credomatic, Davivienda y Promerica. Va por dominio ' +
+                  '—baccredomatic.cr— y no por dirección entera, para que siga funcionando ' +
+                  'cuando el banco cambie desde qué buzón escribe. Si lo dejas vacío vuelven los de fábrica.'
               })
             ]),
             g.autorizado ? el('button.btn.btn-danger', {

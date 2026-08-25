@@ -139,6 +139,21 @@
       if (clave && lista.length) p.fijos[clave] = limpiarFijos(lista);
     });
 
+    /* Los remitentes pasaron de ser direcciones enteras a dominios, porque el
+       BAC cambió su remite y la app dejó de ver sus compras sin dar ningún
+       error (ver la cabecera de bancos.js). A quien tenga guardada una lista
+       con direcciones se le convierte a dominios: se respeta lo que puso —los
+       bancos que eligió— y se le arregla el problema de paso. */
+    if (d.gmail && Array.isArray(d.gmail.remitentes) &&
+        d.gmail.remitentes.some((r) => String(r).indexOf('@') >= 0)) {
+      const dominios = [];
+      d.gmail.remitentes.forEach((r) => {
+        const dom = String(r).split('@').pop().trim().toLowerCase();
+        if (dom && dominios.indexOf(dom) < 0) dominios.push(dom);
+      });
+      d.gmail.remitentes = dominios;
+    }
+
     (d.gastos || []).forEach((g) => {
       if (!Array.isArray(g.asignaciones) || !g.asignaciones.length) {
         g.asignaciones = [{ presupuestoId: g.presupuestoId || null, monto: Number(g.monto) || 0 }];

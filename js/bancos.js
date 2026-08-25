@@ -24,12 +24,26 @@
 (function (global) {
   'use strict';
 
-  /* Los remitentes que se buscan en Gmail. Se pueden cambiar desde Ajustes:
-     si cambias de banco, no hace falta tocar el código. */
+  /* Los remitentes que se buscan en Gmail. Se pueden cambiar desde Ajustes: si
+     cambias de banco, no hace falta tocar el código.
+
+     **Van por DOMINIO, no por dirección entera, y esto costó un fallo.**
+
+     El BAC cambió su remite de `notificacion@baccredomatic.cr` a
+     `NotificacionBAC@baccredomatic.cr` y la app dejó de ver sus compras de un
+     día para otro. Y lo peor: sin fallar en nada. Leía los correos de los otros
+     bancos, no daba ningún error, y los del BAC sencillamente no existían para
+     ella, porque le pedía a Gmail una dirección exacta que ya no se usaba.
+
+     Con el dominio, cualquier dirección del banco vale: `notificacion@`,
+     `NotificacionBAC@` y la que se inventen mañana. Entran también algunas
+     promociones, pero eso no cuesta nada —el lector las descarta y quedan a la
+     vista en «correos que no se pudieron leer»—, mientras que perder una compra
+     sí cuesta. */
   const REMITENTES = [
-    'notificacion@baccredomatic.cr',
-    'alertas@davibank.cr',
-    'info@promerica.fi.cr'
+    'baccredomatic.cr',
+    'davibank.cr',
+    'promerica.fi.cr'
   ];
 
   const MESES = {
