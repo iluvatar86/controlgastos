@@ -1033,6 +1033,14 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 
 /* El mismo aviso, pero cuando algo no funciona. En rojo y con la explicación
    entera: aquí el texto es el aviso, así que no se corta. */
+/* ---------- versión, al final de Ajustes ----------------------------------- */
+
+.pie-version { align-items: flex-start; }
+
+.version-linea { margin: 0; font-size: .9375rem; }
+.version-num { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 700; }
+.version-nota { font-size: .75rem; color: var(--muted); line-height: 1.4; }
+
 /* ---------- correos que no se pudieron leer -------------------------------- */
 
 .norecon { display: flex; flex-direction: column; gap: 10px; }

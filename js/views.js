@@ -1963,8 +1963,103 @@
         ])
       ]),
 
-      gmailAjustes()
+      gmailAjustes(),
+
+      pieDeVersion()
     ]);
+  }
+
+  /* ---------- qué versión se está usando -------------------------------------
+
+     No se enseña una versión escrita a mano en el código, sino **la que el
+     teléfono tiene guardada de verdad**: el nombre de la caja donde el modo sin
+     conexión guarda los archivos es exactamente `controlgastos-vNN`.
+
+     La diferencia importa, y es justo la pregunta que se quiere responder aquí.
+     Una constante en el código diría la versión del archivo que se está
+     leyendo; esto dice la que está instalada. Cuando uno se pregunta «¿tengo ya
+     la versión nueva?», lo que quiere saber es lo segundo.
+
+     Si no hay modo sin conexión —servidor local, o el navegador no lo permite—
+     se lee el número del propio `sw.js`, que es donde vive. Nunca se inventa.
+  --------------------------------------------------------------------------- */
+
+  function pieDeVersion() {
+    const linea = el('span.version-num', { text: 'comprobando…' });
+    const nota = el('span.version-nota');
+    const boton = el('button.link-boton', {
+      type: 'button', text: 'Buscar una versión nueva',
+      onclick: () => buscarVersionNueva(boton)
+    });
+
+    versionInstalada().then((v) => {
+      linea.textContent = v.version || 'desconocida';
+      nota.textContent = v.deLaCaja
+        ? 'instalada en este teléfono · funciona sin conexión'
+        : 'servida por la web · sin copia guardada todavía';
+    }).catch(() => {
+      linea.textContent = 'desconocida';
+      nota.textContent = 'no se ha podido comprobar';
+    });
+
+    return el('section.card.pie-version', [
+      el('h2.card-title', { text: 'Versión' }),
+      el('p.version-linea', [
+        el('strong', { text: 'Control de Gastos ' }),
+        linea
+      ]),
+      nota,
+      boton
+    ]);
+  }
+
+  function versionInstalada() {
+    const deSw = () => fetch('sw.js', { cache: 'no-store' })
+      .then((r) => r.text())
+      .then((t) => {
+        const m = t.match(/VERSION\s*=\s*'([^']+)'/);
+        return { version: m ? m[1].replace(/^controlgastos-/, '') : null, deLaCaja: false };
+      });
+
+    if (!('caches' in window)) return deSw();
+
+    return caches.keys().then((nombres) => {
+      // Durante una actualización pueden convivir dos: manda la más alta.
+      const mias = nombres.filter((n) => n.indexOf('controlgastos-') === 0).sort(porNumero);
+      if (!mias.length) return deSw();
+      return { version: mias[mias.length - 1].replace(/^controlgastos-/, ''), deLaCaja: true };
+    }).catch(deSw);
+  }
+
+  // 'controlgastos-v9' va ANTES que 'controlgastos-v22': comparados como texto
+  // saldría al revés y se enseñaría la vieja.
+  function porNumero(a, b) {
+    const n = (s) => Number((s.match(/(\d+)\s*$/) || [0, 0])[1]);
+    return n(a) - n(b);
+  }
+
+  /* Le pide al navegador que mire si hay una versión nueva, en vez de tener que
+     cerrar la app del todo y volver a abrirla —que es lo que había que hacer
+     antes y no es evidente que haga falta—. */
+  function buscarVersionNueva(boton) {
+    if (!('serviceWorker' in navigator)) {
+      location.reload();
+      return;
+    }
+    boton.textContent = 'Buscando…';
+    boton.disabled = true;
+
+    navigator.serviceWorker.getRegistration()
+      .then((reg) => (reg ? reg.update() : null))
+      .then(() => {
+        boton.textContent = 'Recargando…';
+        // Un respiro para que termine de guardarse lo que se haya bajado.
+        setTimeout(() => location.reload(true), 800);
+      })
+      .catch(() => {
+        boton.textContent = 'No se ha podido comprobar. Prueba a cerrar la app y abrirla.';
+        boton.disabled = false;
+      });
   }
 
   /* ---------- ajustes de Gmail ---------------------------------------------- */
