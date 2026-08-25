@@ -65,7 +65,7 @@
     gmail: {
       clientId: '',             // el que se saca de Google Cloud; ver AJUSTES
       remitentes: [],           // vacío = los de fábrica (Bancos.REMITENTES)
-      diasAtras: 30,            // hasta dónde mira hacia atrás la revisión a fondo
+      diasAtras: 30,            // solo el PRIMER import; luego son 7 días (ver gmail.js)
       revisarAlAbrir: 'cada6h', // 'siempre' | 'cada6h' | 'nunca'
       presupuestoPorDefecto: null,
       ultimaRevision: null,
@@ -125,6 +125,19 @@
      del viaje sale además de la quincena. Las copias de seguridad antiguas se
      convierten al abrirlas: no hay que hacer nada a mano. */
   function migrar(d) {
+    /* Los gastos fijos empezaron siendo una lista sola en el presupuesto, que
+       valía para todos los periodos a la vez. Ahora son de cada periodo, así
+       que son un objeto `{inicioDelPeriodo: lista}`. Lo que hubiera en la forma
+       antigua se pasa al periodo en curso, que es donde se estaba mirando. */
+    (d.presupuestos || []).forEach((p) => {
+      if (!p.fijos) { p.fijos = {}; return; }
+      if (!Array.isArray(p.fijos)) return;
+      const lista = p.fijos;
+      p.fijos = {};
+      const clave = claveDeCiclo(p, cicloDe(p, D.hoy()));
+      if (clave && lista.length) p.fijos[clave] = limpiarFijos(lista);
+    });
+
     (d.gastos || []).forEach((g) => {
       if (!Array.isArray(g.asignaciones) || !g.asignaciones.length) {
         g.asignaciones = [{ presupuestoId: g.presupuestoId || null, monto: Number(g.monto) || 0 }];
@@ -271,6 +284,8 @@
       periodo: 'quincenal',
       cortes: [1, 16],          // solo se usa con periodo 'personalizado'
       limites: {},              // { claveDeCategoria: tope por periodo }
+      montos: {},               // { inicioDelPeriodo: importe propio de ESE periodo }
+      fijos: {},                // { inicioDelPeriodo: [{id, nombre, monto}] }
       moneda: d.ajustes.monedaPorDefecto,
       color: COLORES_PRESUPUESTO[usados % COLORES_PRESUPUESTO.length],
       emoji: '💰',
@@ -280,6 +295,7 @@
       creadoEn: D.hoy()
     }, borrador);
     item.monto = Number(item.monto) || 0;
+    if (!item.fijos || Array.isArray(item.fijos)) item.fijos = {};
     d.presupuestos.push(item);
     save();
     return item;
@@ -317,6 +333,100 @@
       if (asignaciones(g).length > 1) compartidos++; else solos++;
     });
     return { solos, compartidos };
+  }
+
+  /* ---------- gastos fijos, DE CADA PERIODO ---------------------------------
+
+     El alquiler, la escuela, el préstamo, el internet. Tienen dos cosas en
+     común: **no son compras** y el importe se sabe de antemano.
+
+     Dónde NO viven: en `gastos`. Meterlos ahí ensucia justo lo que sirve para
+     decidir —el gráfico del día a día se convierte en un pico gigante el día
+     3, el reparto por categoría lo domina el alquiler, y las baldosas del
+     Resumen dicen que hoy se gastó una fortuna cuando lo único que pasó es que
+     se pagó la casa—. Al vivir fuera, todo lo que recorre `gastos` (gráficos,
+     categorías, topes, baldosas, «últimos gastos», lo que trae el correo) **no
+     los ve siquiera**, sin tener que acordarse de filtrarlos en cada sitio.
+
+     Dónde SÍ viven: en el periodo. `presupuesto.fijos` es un objeto
+     `{inicioDelPeriodo: [{id, nombre, monto}]}`, con la misma clave que los
+     importes propios de un periodo (ver más abajo `claveDeCiclo`).
+
+     **Son de cada periodo, no del presupuesto**, y esto se hizo mal la primera
+     vez: estaban en el presupuesto y valían para todas las quincenas a la vez.
+     No sirve — cada quincena tiene los suyos, porque no todas traen los mismos
+     recibos. Para no tener que reescribirlos cada quince días está
+     `fijosDelVecino`, que alimenta el botón «copiar los del periodo anterior»:
+     explícito y de un toque, en vez de una herencia automática que luego nadie
+     entiende de dónde sale.
+
+     Lo que sí hacen es **descontar del presupuesto**, y tienen que hacerlo: si
+     de ₡500.000 hay ₡200.000 comprometidos, lo que queda para comprar son
+     ₡300.000, y decir otra cosa sería mentir justo en el número que se mira.
+
+     No hay casilla de «pagado» a propósito: el dinero está comprometido igual
+     el día 1 que el 28, y una casilla más que marcar cada quincena es
+     exactamente el trabajo que esta pantalla existe para ahorrar.
+  --------------------------------------------------------------------------- */
+
+  function limpiarFijos(lista) {
+    return (Array.isArray(lista) ? lista : []).map((f) => ({
+      id: (f && f.id) || uid('fijo'),
+      nombre: String((f && f.nombre) || '').trim() || 'Gasto fijo',
+      monto: Number(f && f.monto) || 0
+    })).filter((f) => f.monto > 0);
+  }
+
+  function fijosDe(pre, ciclo) {
+    const clave = claveDeCiclo(pre, ciclo);
+    if (!pre || !clave) return [];
+    return limpiarFijos((pre.fijos || {})[clave]);
+  }
+
+  function totalFijos(pre, ciclo) {
+    if (!pre) return 0;
+    return D.redondear(fijosDe(pre, ciclo).reduce((s, f) => s + f.monto, 0), pre.moneda);
+  }
+
+  function setFijos(presupuestoId, ciclo, lista) {
+    const pre = presupuesto(presupuestoId);
+    const clave = claveDeCiclo(pre, ciclo);
+    if (!pre || !clave) return null;
+    if (!pre.fijos || Array.isArray(pre.fijos)) pre.fijos = {};
+    const limpia = limpiarFijos(lista);
+    if (limpia.length) pre.fijos[clave] = limpia;
+    else delete pre.fijos[clave];
+    save();
+    return pre;
+  }
+
+  /* Los fijos del periodo de al lado, para poder copiarlos sin reescribirlos.
+     Se miran los dos lados: lo normal es traérselos del anterior, pero si se
+     está rellenando una quincena vieja el que tiene los datos es el siguiente. */
+  function fijosDelVecino(pre, ciclo) {
+    const previo = cicloVecino(pre, ciclo, -1);
+    const deAtras = previo ? fijosDe(pre, previo) : [];
+    if (deAtras.length) return { lista: deAtras, ciclo: previo, direccion: -1 };
+    const posterior = cicloVecino(pre, ciclo, +1);
+    const deDelante = posterior ? fijosDe(pre, posterior) : [];
+    if (deDelante.length) return { lista: deDelante, ciclo: posterior, direccion: +1 };
+    return null;
+  }
+
+  /* Cuántos periodos llevan fijos apuntados. Sirve para avisar antes de borrar
+     lo que se perdería al mover las fechas de los periodos. */
+  function periodosConFijos(pre) {
+    const mapa = (pre && pre.fijos) || {};
+    if (Array.isArray(mapa)) return [];
+    return Object.keys(mapa).filter((k) => limpiarFijos(mapa[k]).length).sort();
+  }
+
+  function olvidarFijos(presupuestoId) {
+    const pre = presupuesto(presupuestoId);
+    if (!pre) return null;
+    pre.fijos = {};
+    save();
+    return pre;
   }
 
   /* ---------- ciclos -------------------------------------------------------- */
@@ -429,35 +539,109 @@
 
   function cicloActual(pre) { return cicloDe(pre, D.hoy()); }
 
-  /* Hasta dónde se puede retroceder en un presupuesto que se repite.
+  /* ---------- el importe de UN periodo suelto -------------------------------
 
-     Sale de los datos, no de un ajuste: el gasto más antiguo que tenga. Antes
-     había un campo «empieza a contar desde» que sólo servía para esto, venía
-     con la fecha de hoy y, de fábrica, impedía mirar las quincenas anteriores
-     —justo donde caen los gastos que trae la primera revisión del correo—.
-     Así no hay nada que configurar y no hay forma de equivocarse: si existe un
-     gasto de julio, julio se puede visitar; si no hay ninguno, no hay adónde ir.
+     Un presupuesto que se repite lleva el mismo dinero cada periodo, y eso es
+     lo normal. Pero una quincena puede traer aguinaldo y otra venir más
+     floja: en `montos` se guarda el importe propio de ese periodo concreto,
+     con la fecha en que empieza el periodo como clave.
 
-     `inicio` se sigue guardando (es la fecha de alta y en los presupuestos de
-     una vez sí define el periodo), pero en los recurrentes ya no limita nada. */
-  function limiteAtras(pre) {
-    let masViejo = null;
-    load().gastos.forEach((g) => {
-      if (!estaEn(g, pre.id)) return;
-      if (masViejo === null || g.fecha < masViejo) masViejo = g.fecha;
-    });
-    return masViejo;
+     Es una excepción, no un cambio: el importe de siempre (`monto`) sigue
+     mandando en todos los demás periodos, incluidos los que aún no han
+     llegado. Quitar la excepción devuelve el periodo al de siempre.
+
+     La clave es la fecha de inicio del periodo porque es lo único que lo
+     identifica sin guardar los ciclos (ver la nota de arriba del archivo). Por
+     eso, si se cambia cada cuánto se repite o los días de corte, las fechas de
+     los periodos se mueven y las excepciones dejan de tener sentido: quien
+     guarda ese cambio las borra a propósito, avisando antes.
+  --------------------------------------------------------------------------- */
+
+  /* La clave con la que se guarda cualquier cosa que sea DE UN PERIODO: su
+     importe propio y sus gastos fijos.
+
+     En los que se repiten es la fecha en que empieza el periodo, que es lo
+     único que lo identifica sin guardar los ciclos. En los de una vez hay un
+     solo periodo, así que se usa una clave fija: si se usara `inicio`, mover la
+     fecha de inicio del presupuesto dejaría sus gastos fijos colgando de una
+     fecha que ya no existe. */
+  function claveDeCiclo(pre, ciclo) {
+    if (!pre) return null;
+    if (pre.tipo !== 'recurrente') return 'unico';
+    return (ciclo && ciclo.inicio) ? ciclo.inicio : null;
+  }
+
+  function tieneMontoPropio(pre, ciclo) {
+    if (!pre || pre.tipo !== 'recurrente') return false;
+    const clave = claveDeCiclo(pre, ciclo);
+    if (!clave) return false;
+    return Number((pre.montos || {})[clave]) > 0;
+  }
+
+  function montoDeCiclo(pre, ciclo) {
+    if (!pre) return 0;
+    if (tieneMontoPropio(pre, ciclo)) return Number(pre.montos[claveDeCiclo(pre, ciclo)]);
+    return Number(pre.monto) || 0;
+  }
+
+  /* Con 0 (o con el mismo importe de siempre) se quita la excepción. Poner a
+     mano el mismo número que ya tenía el presupuesto no es una excepción: es
+     no haber cambiado nada, y así ese periodo sigue al presupuesto si mañana
+     se le sube el dinero a todos. */
+  function setMontoDeCiclo(presupuestoId, ciclo, monto) {
+    const pre = presupuesto(presupuestoId);
+    const clave = claveDeCiclo(pre, ciclo);
+    if (!pre || !clave) return null;
+    if (!pre.montos) pre.montos = {};
+    const n = Number(monto) || 0;
+    if (n > 0 && n !== (Number(pre.monto) || 0)) pre.montos[clave] = n;
+    else delete pre.montos[clave];
+    save();
+    return pre;
+  }
+
+  /* Las fechas de inicio de los periodos que tienen importe propio, en orden.
+     Sirve para poder decir cuántos hay antes de borrarlos. */
+  function periodosConMontoPropio(pre) {
+    const montos = (pre && pre.montos) || {};
+    return Object.keys(montos).filter((k) => Number(montos[k]) > 0).sort();
+  }
+
+  function olvidarMontosPropios(presupuestoId) {
+    const pre = presupuesto(presupuestoId);
+    if (!pre) return null;
+    pre.montos = {};
+    save();
+    return pre;
   }
 
   /* Salta al ciclo anterior (-1) o al siguiente (+1). Se apoya en cicloDe con
-     una fecha del ciclo vecino, para no repetir aquí las reglas del calendario. */
+     una fecha del ciclo vecino, para no repetir aquí las reglas del calendario.
+
+     LAS DOS FLECHAS VAN SIEMPRE, y esto ya se hizo mal dos veces seguidas.
+
+     Un presupuesto que se repite no tiene principio: se calcula el periodo que
+     toque para la fecha que sea. Poner un tope sólo hacia atrás deja la
+     navegación coja —hacia delante infinita, hacia atrás frenada— y eso se
+     siente como una avería, no como una regla.
+
+     Los dos intentos anteriores de frenarla y por qué fallaron:
+
+     1. Un campo «empieza a contar desde», que venía con la fecha de hoy y de
+        fábrica tapaba las quincenas anteriores, justo donde caen los gastos de
+        la primera revisión del correo.
+     2. El gasto más antiguo del presupuesto. Mejor, porque salía de los datos
+        y no había nada que configurar, pero seguía atrancando: en un
+        presupuesto SIN NINGÚN GASTO no había tope, así que la flecha de atrás
+        no iba nunca — se podía avanzar al futuro y quedarse encerrado allí,
+        sin manera de volver. Con gastos tampoco se podía mirar la quincena de
+        antes de empezar a usar la app.
+
+     Un periodo vacío no es un error que haya que impedir: se enseña vacío, que
+     es la verdad, y «Ir al actual» devuelve a casa desde donde sea. */
   function cicloVecino(pre, ciclo, direccion) {
     if (!pre || pre.tipo !== 'recurrente' || !ciclo) return null;
     const f = direccion < 0 ? D.sumarDias(ciclo.inicio, -1) : D.sumarDias(ciclo.fin, 1);
-    if (direccion < 0) {
-      const tope = limiteAtras(pre);
-      if (!tope || f < tope) return null;
-    }
     return cicloDe(pre, f);
   }
 
@@ -605,8 +789,22 @@
     const lista = gastosDe(pre.id, c);
     const gastado = D.redondear(
       lista.reduce((suma, g) => suma + montoAsignadoEn(g, pre.id, pre.moneda), 0), pre.moneda);
-    const asignado = Number(pre.monto) || 0;
-    const disponible = D.redondear(asignado - gastado, pre.moneda);
+    // El de siempre, salvo que ESTE periodo tenga uno propio. Todo lo que
+    // enseña un importe de presupuesto sale de aquí, así que la excepción
+    // llega sola al Resumen, a las tarjetas, a los gráficos y al texto que se
+    // comparte, sin repetir la regla en cada sitio.
+    const asignado = montoDeCiclo(pre, c);
+    const propio = tieneMontoPropio(pre, c);
+
+    /* Los gastos fijos salen del presupuesto antes que nada: son dinero que ya
+       está comprometido. `gastado` sigue significando lo mismo que siempre
+       —compras, y solo compras—, así que ningún gráfico ni ningún tope cambia
+       de sentido; lo que cambia es que `disponible` deja de contar un dinero
+       que en realidad no está. */
+    const fijos = totalFijos(pre, c);
+    const paraCompras = D.redondear(asignado - fijos, pre.moneda);
+    const comprometido = D.redondear(fijos + gastado, pre.moneda);
+    const disponible = D.redondear(asignado - comprometido, pre.moneda);
 
     const hoy = D.hoy();
     let diasTotales = null;
@@ -626,10 +824,18 @@
       gastos: lista,
       numGastos: lista.length,
       asignado,
+      asignadoPropio: propio,
+      fijos,
+      listaFijos: fijosDe(pre, c),
+      paraCompras,
       gastado,
+      comprometido,
       disponible,
-      consumido: D.porcentaje(gastado, asignado),
-      excedido: gastado > asignado,
+      // La barra mide el presupuesto ENTERO, fijos incluidos: si la mitad del
+      // dinero ya está comprometida, eso hay que verlo el día 1.
+      consumido: D.porcentaje(comprometido, asignado),
+      consumidoFijos: D.porcentaje(fijos, asignado),
+      excedido: comprometido > asignado,
       diasTotales,
       diasRestantes,
       porDia
@@ -843,7 +1049,9 @@
     presupuestos, presupuesto, addPresupuesto, updatePresupuesto, deletePresupuesto, impactoDeBorrar,
     presupuestosCerrados, estadoDePresupuesto, estaActivo, vencido, archivar,
     fechaDeReferencia, cicloDeReferencia,
-    cicloDe, cicloActual, cicloVecino, enCiclo, cortesDe, limiteAtras,
+    cicloDe, cicloActual, cicloVecino, enCiclo, cortesDe,
+    montoDeCiclo, tieneMontoPropio, setMontoDeCiclo, periodosConMontoPropio, olvidarMontosPropios,
+    fijosDe, totalFijos, setFijos, fijosDelVecino, periodosConFijos, olvidarFijos,
     gastos, gasto, gastosDe, addGasto, updateGasto, deleteGasto, montoEnMonedaDe,
     asignaciones, presupuestosDe, primerPresupuesto, estaEn, montoAsignadoEn, convertir,
     gmail, setGmail, remitentes, pendientes, pendiente, addPendiente, cerrarPendiente,

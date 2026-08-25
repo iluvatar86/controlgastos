@@ -63,12 +63,23 @@
   /* Barra de consumo. Verde mientras haya margen, ámbar cuando queda poco y
      rojo cuando se llegó al tope o se pasó. El umbral del ámbar vive en
      Store.AVISO para que todas las barras de la app cambien a la vez. */
-  function barra(consumido, excedido) {
+  function barra(consumido, excedido, consumidoFijos) {
     const ancho = Math.min(100, Math.max(0, consumido));
+    // El tramo de los gastos fijos va apagado y primero: no es una decisión de
+    // este periodo, es dinero que ya estaba comprometido antes de empezar.
+    const fijos = Math.min(ancho, Math.max(0, consumidoFijos || 0));
     const estado = excedido ? ' is-over' : (consumido >= Store.AVISO ? ' is-warn' : '');
     return el('div.bar', { class: 'bar' + estado }, [
-      el('div.bar-fill', { class: 'bar-fill' + estado, style: { width: ancho + '%' } })
+      fijos > 0 ? el('div.bar-fijos', { style: { width: fijos + '%' } }) : null,
+      el('div.bar-fill', { class: 'bar-fill' + estado, style: { width: (ancho - fijos) + '%' } })
     ]);
+  }
+
+  /* La barra de un presupuesto, con su tramo de fijos si los tiene. Se usa en
+     todas las tarjetas para que la misma barra signifique lo mismo en toda la
+     app. */
+  function barraDeResumen(r) {
+    return barra(r.consumido, r.excedido, r.consumidoFijos);
   }
 
   function barraDeEstado(consumido, estado) {
@@ -193,9 +204,14 @@
             })
           ])
         ]),
-        barra(r.consumido, r.excedido),
+        barraDeResumen(r),
         el('div.pre-foot', [
-          el('span', { text: D.dinero(r.gastado, pre.moneda) + ' de ' + D.dinero(r.asignado, pre.moneda) }),
+          el('span', {
+            text: r.fijos
+              ? D.dinero(r.gastado, pre.moneda) + ' en compras · ' +
+                D.dinero(r.fijos, pre.moneda) + ' en fijos'
+              : D.dinero(r.gastado, pre.moneda) + ' de ' + D.dinero(r.asignado, pre.moneda)
+          }),
           el('span', { text: r.consumido + ' %' })
         ]),
         cerrado ? el('span.chapa-cerrado', { text: motivoDelCierre(pre) }) : chapaDeTopes(pre, r.ciclo)
@@ -285,30 +301,51 @@
             class: 'balance-v' + (r.excedido ? ' is-over' : ''),
             text: D.dinero(r.disponible, pre.moneda)
           }),
-          el('span.balance-l', { text: r.excedido ? 'gastado de más' : 'te queda disponible' })
+          // Con gastos fijos el número de arriba ya no es «lo que queda» a
+          // secas, es lo que queda PARA COMPRAR. Decirlo evita la pregunta.
+          el('span.balance-l', {
+            text: r.excedido ? 'gastado de más'
+              : (r.fijos ? 'te queda para compras' : 'te queda disponible')
+          })
         ]),
-        barra(r.consumido, r.excedido),
-        el('div.balance-grid', [
-          dato('Presupuesto', D.dinero(r.asignado, pre.moneda)),
+        barraDeResumen(r),
+        el('div.balance-grid', {
+          class: 'balance-grid' + (r.fijos ? ' is-cuatro' : '')
+        }, r.fijos ? [
+          dato('Presupuesto', D.dinero(r.asignado, pre.moneda), r.asignadoPropio),
+          dato('Gastos fijos', D.dinero(r.fijos, pre.moneda)),
+          dato('Compras', D.dinero(r.gastado, pre.moneda)),
+          dato('Consumido', r.consumido + ' %')
+        ] : [
+          dato('Presupuesto', D.dinero(r.asignado, pre.moneda), r.asignadoPropio),
           dato('Gastado', D.dinero(r.gastado, pre.moneda)),
           dato('Consumido', r.consumido + ' %')
         ]),
+        montoDelPeriodo(pre, ciclo, r),
         r.diasRestantes !== null && esActual ? ritmo(r, pre) : null,
         el('a.btn.btn-primary.btn-block', {
           href: '#/nuevo/' + pre.id, text: '+ Apuntar un gasto'
         })
       ]),
 
+      tarjetaDeFijos(pre, ciclo, r),
+
       tarjetaDeLimites(pre, ciclo),
 
       r.numGastos ? el('section.card', [
         el('div.chart-head', [
           el('h2.card-title', { text: 'Cómo va el gasto' }),
-          el('p.muted', { text: 'La línea de puntos es el ritmo que agota el presupuesto justo el último día.' })
+          el('p.muted', {
+            text: 'La línea de puntos es el ritmo que agota el presupuesto justo el último día.' +
+              (r.fijos ? ' Aquí solo entran las compras: los gastos fijos ya están descontados.' : '')
+          })
         ]),
         Charts.acumulado({
           dias: dias,
-          meta: r.asignado,
+          // La meta es lo que queda PARA COMPRAR, no el presupuesto entero: la
+          // línea solo dibuja compras, así que compararla con el total haría
+          // parecer que sobra un dinero que ya está comprometido.
+          meta: r.paraCompras,
           moneda: pre.moneda,
           diasTotales: r.diasTotales || dias.length,
           finIso: ciclo.fin
@@ -345,6 +382,178 @@
     ]);
   }
 
+  /* ---------- los gastos fijos DE ESTE periodo ------------------------------
+
+     Van justo debajo del saldo porque lo explican: sin esta tarjeta, el saldo
+     enseña un número más bajo del que salía la cuenta y no hay dónde mirar por
+     qué. Y van en su propio sitio, no mezclados con los gastos de abajo.
+
+     Se apuntan **desde dentro del periodo**, no al crear el presupuesto: cada
+     quincena tiene los suyos, porque no todas traen los mismos recibos. Para
+     no reescribirlos cada quince días está el botón de copiar los del periodo
+     de al lado — explícito y de un toque, en vez de una herencia automática
+     que luego nadie entiende de dónde sale.
+
+     Aquí no hay barra ni porcentaje a propósito: un gasto fijo no se «va
+     consumiendo», está pagado y punto.
+  --------------------------------------------------------------------------- */
+
+  // Igual que con el importe del periodo: la clave lleva el periodo dentro,
+  // así que al cambiar de quincena el editor se cierra solo en vez de quedarse
+  // abierto con la lista de la otra.
+  let fijosAbierto = null;
+  let fijosBorrador = [];
+
+  function tarjetaDeFijos(pre, ciclo, r) {
+    const clave = pre.id + '|' + ((ciclo && ciclo.inicio) || 'unico');
+    if (fijosAbierto === clave) return fijosEditor(pre, ciclo, r, clave);
+
+    const vecino = Store.fijosDelVecino(pre, ciclo);
+    const abrir = (lista) => {
+      fijosAbierto = clave;
+      fijosBorrador = lista.map((f) => ({ id: f.id, nombre: f.nombre, monto: String(f.monto) }));
+      App.render();
+    };
+
+    if (!r.fijos) {
+      return el('section.card.fijos-vacio', [
+        el('h2.card-title', { text: 'Gastos fijos del periodo' }),
+        el('div.fijo-acciones', [
+          el('button.link-boton', {
+            type: 'button', text: '+ Añadir un gasto fijo',
+            onclick: () => abrir([{ id: Store.uid('fijo'), nombre: '', monto: '' }])
+          }),
+          vecino ? el('button.link-boton.link-copiar', {
+            type: 'button',
+            text: 'Copiar los de ' + vecino.ciclo.etiqueta + ' (' + vecino.lista.length + ')',
+            onclick: () => abrir(vecino.lista.map((f) =>
+              ({ id: Store.uid('fijo'), nombre: f.nombre, monto: f.monto })))
+          }) : null
+        ])
+      ]);
+    }
+
+    return el('section.card', [
+      el('div.card-head', [
+        el('h2.card-title', { text: 'Gastos fijos del periodo' }),
+        el('button.link-soft.link-boton', {
+          type: 'button', text: 'Cambiar',
+          onclick: () => abrir(r.listaFijos)
+        })
+      ]),
+      el('ul.fijos', r.listaFijos.map((f) => el('li.fijo', [
+        el('span.fijo-nombre', { text: f.nombre }),
+        el('span.fijo-monto', { text: D.dinero(f.monto, pre.moneda) })
+      ]))),
+      el('div.fijo-total', [
+        el('span', { text: 'Total comprometido' }),
+        el('span', { text: D.dinero(r.fijos, pre.moneda) })
+      ])
+    ]);
+  }
+
+  function etiquetaDelPeriodo(pre, ciclo) {
+    if (pre.tipo !== 'recurrente') return 'este presupuesto';
+    return ciclo && ciclo.etiqueta ? ciclo.etiqueta : 'este periodo';
+  }
+
+  /* El total se repinta a cada tecla sin rehacer la pantalla: volver a
+     dibujarlo todo en mitad de una palabra deja el campo sin foco y en el
+     móvil cierra el teclado. Lo mismo que hace el reparto de un gasto entre
+     varios presupuestos. */
+  function fijosEditor(pre, ciclo, r, clave) {
+    const lista = fijosBorrador;
+    const resumenFijos = el('p.hint');
+    const cerrar = () => { fijosAbierto = null; fijosBorrador = []; App.render(); };
+    const refrescar = () => App.render();
+
+    function pintarTotal() {
+      const suma = lista.reduce((s, f) => s + (D.leerImporte(f.monto) || 0), 0);
+      const queda = D.redondear(r.asignado - suma, pre.moneda);
+      if (!suma) {
+        resumenFijos.className = 'hint';
+        resumenFijos.textContent = 'De momento no suman nada. Las filas sin importe no se guardan.';
+        return;
+      }
+      if (queda < 0) {
+        resumenFijos.className = 'hint is-error';
+        resumenFijos.textContent = 'Suman ' + D.dinero(suma, pre.moneda) + ', más que los ' +
+          D.dinero(r.asignado, pre.moneda) + ' del periodo. Se pasa ' +
+          D.dinero(Math.abs(queda), pre.moneda) + ' y no queda nada para comprar.';
+        return;
+      }
+      resumenFijos.className = 'hint';
+      resumenFijos.textContent = 'Suman ' + D.dinero(suma, pre.moneda) + ' de ' +
+        D.dinero(r.asignado, pre.moneda) + ': quedan ' + D.dinero(queda, pre.moneda) +
+        ' para comprar.';
+    }
+
+    pintarTotal();
+
+    return el('section.card.fijos-editor', [
+      el('h2.card-title', { text: 'Gastos fijos de ' + etiquetaDelPeriodo(pre, ciclo) }),
+      el('p.hint-box', {
+        text: pre.tipo === 'recurrente'
+          ? 'Estos son solo de este periodo. Los demás periodos no cambian.'
+          : 'Lo que hay que pagar sí o sí dentro de este presupuesto y no es una compra.'
+      }),
+
+      lista.length ? el('div.fijos-edit', lista.map((f) => el('div.fijo-edit', [
+        el('input.fijo-edit-nombre', {
+          type: 'text', value: f.nombre, placeholder: 'Alquiler, escuela, internet…',
+          'aria-label': 'Nombre del gasto fijo',
+          oninput: (e) => { f.nombre = e.target.value; }
+        }),
+        el('button.corte-quitar.fijo-quitar', {
+          type: 'button', text: '×', 'aria-label': 'Quitar este gasto fijo',
+          onclick: () => { fijosBorrador = lista.filter((x) => x !== f); refrescar(); }
+        }),
+        el('input.in-amount-sm.fijo-edit-monto', {
+          type: 'text', inputmode: 'decimal', value: f.monto, placeholder: '0',
+          'aria-label': 'Importe del gasto fijo',
+          oninput: (e) => { f.monto = e.target.value; pintarTotal(); }
+        })
+      ]))) : null,
+
+      el('button.btn.btn-small', {
+        type: 'button', text: '+ Añadir un gasto fijo',
+        onclick: () => {
+          fijosBorrador = lista.concat([{ id: Store.uid('fijo'), nombre: '', monto: '' }]);
+          refrescar();
+          // El teclado se abre en la fila nueva: si no, hay que buscarla y
+          // tocarla, que en el móvil es un paso de más cada vez.
+          setTimeout(() => {
+            const filas = document.querySelectorAll('.fijo-edit-nombre');
+            if (filas.length) filas[filas.length - 1].focus();
+          }, 0);
+        }
+      }),
+
+      resumenFijos,
+
+      el('div.form-actions', [
+        el('button.btn', { type: 'button', text: 'Cancelar', onclick: cerrar }),
+        el('button.btn.btn-primary', {
+          type: 'button', text: 'Guardar',
+          onclick: () => {
+            const limpia = lista
+              .map((f) => ({ id: f.id, nombre: f.nombre, monto: D.leerImporte(f.monto) || 0 }))
+              .filter((f) => f.monto > 0);
+            const suma = limpia.reduce((s, f) => s + f.monto, 0);
+            // Se puede guardar igual —a veces la cuenta sale así de verdad—,
+            // pero callarlo dejaría el periodo empezando en rojo sin explicación.
+            if (suma > r.asignado && !confirm(
+              'Los gastos fijos suman ' + D.dinero(suma, pre.moneda) + ', más que los ' +
+              D.dinero(r.asignado, pre.moneda) + ' de este periodo. Se puede guardar, pero ' +
+              'no quedará nada para comprar. ¿Sigo?')) return;
+            Store.setFijos(pre.id, ciclo, limpia);
+            cerrar();
+          }
+        })
+      ])
+    ]);
+  }
+
   /* Los topes van justo debajo del saldo, antes que los gráficos: es lo que
      hay que mirar antes de gastar, no un dato para el final. Van ordenados por
      lo lleno que está cada uno, así que lo que está a punto de reventar sale
@@ -378,10 +587,92 @@
     ]);
   }
 
-  function dato(etiqueta, valor) {
-    return el('div.stat', [
+  function dato(etiqueta, valor, marcado) {
+    return el('div.stat', { class: 'stat' + (marcado ? ' is-propio' : '') }, [
       el('span.stat-v', { text: valor }),
       el('span.stat-l', { text: etiqueta })
+    ]);
+  }
+
+  /* ---------- el presupuesto de UN periodo suelto ---------------------------
+
+     El salario no siempre trae lo mismo: una quincena entra el aguinaldo y
+     otra viene más floja. Aquí se le pone a ESE periodo su propio importe sin
+     tocar los demás, que es lo que se quiere; cambiar el presupuesto entero
+     desde «Editar» seguiría estando mal para el resto de quincenas.
+
+     Se puede hacer en cualquier periodo, también en los ya pasados: corregir
+     la quincena de julio es justo para lo que sirve.
+  --------------------------------------------------------------------------- */
+
+  // Qué periodo tiene el importe abierto para editar, y lo que se lleva
+  // escrito. Fuera de la función porque App.render() rehace la pantalla
+  // entera en cada tecla y si no, se cerraría solo.
+  let montoAbierto = null;
+  let montoBorrador = '';
+
+  function montoDelPeriodo(pre, ciclo, r) {
+    if (pre.tipo !== 'recurrente' || !ciclo || !ciclo.inicio) return null;
+
+    // La clave lleva el periodo dentro: al pasar al periodo de al lado el
+    // editor se cierra solo, en vez de quedarse abierto con el otro importe.
+    const clave = pre.id + '|' + ciclo.inicio;
+    const deSiempre = D.dinero(pre.monto, pre.moneda);
+    const cerrar = () => { montoAbierto = null; montoBorrador = ''; App.render(); };
+
+    if (montoAbierto !== clave) {
+      return el('div.monto-periodo', [
+        r.asignadoPropio ? el('p.monto-propio', {
+          text: 'Este periodo tiene su propio presupuesto. Los demás siguen con ' + deSiempre + '.'
+        }) : null,
+        el('div.monto-acciones', [
+          el('button.link-boton', {
+            type: 'button',
+            text: r.asignadoPropio ? 'Cambiarlo otra vez' : 'Cambiar solo este periodo',
+            onclick: () => {
+              montoAbierto = clave;
+              montoBorrador = String(r.asignado);
+              App.render();
+            }
+          }),
+          r.asignadoPropio ? el('button.link-boton.link-deshacer', {
+            type: 'button', text: 'Volver a ' + deSiempre,
+            onclick: () => { Store.setMontoDeCiclo(pre.id, ciclo, 0); App.render(); }
+          }) : null
+        ])
+      ]);
+    }
+
+    const inMonto = el('input.in-amount-sm', {
+      type: 'text', inputmode: 'decimal', value: montoBorrador, placeholder: '0',
+      'aria-label': 'Presupuesto de este periodo',
+      oninput: (e) => { montoBorrador = e.target.value; }
+    });
+
+    return el('div.monto-periodo.is-abierto', [
+      el('p.hint-box', {
+        text: 'Cuánto dinero hay en ' + ciclo.etiqueta + ', solo en ese. ' +
+          'Los demás periodos se quedan con ' + deSiempre + '.'
+      }),
+      el('div.monto-campo', [
+        el('span.monto-simbolo', { text: pre.moneda === 'USD' ? '$' : '₡' }),
+        inMonto
+      ]),
+      el('div.form-actions', [
+        el('button.btn', { type: 'button', text: 'Cancelar', onclick: cerrar }),
+        el('button.btn.btn-primary', {
+          type: 'button', text: 'Guardar',
+          onclick: () => {
+            const v = D.leerImporte(montoBorrador);
+            if (v === null || v <= 0) {
+              alert('Escribe cuánto dinero hay en este periodo.');
+              return;
+            }
+            Store.setMontoDeCiclo(pre.id, ciclo, v);
+            cerrar();
+          }
+        })
+      ])
     ]);
   }
 
@@ -510,9 +801,25 @@
     if (r.ciclo && r.ciclo.etiqueta) lineas.push(r.ciclo.etiqueta);
     lineas.push('');
     lineas.push('Presupuesto: ' + D.dinero(r.asignado, pre.moneda));
-    lineas.push('Gastado: ' + D.dinero(r.gastado, pre.moneda) + ' (' + r.consumido + ' %)');
-    lineas.push((r.excedido ? 'Pasado de: ' : 'Disponible: ') +
-      D.dinero(Math.abs(r.disponible), pre.moneda));
+
+    /* Con gastos fijos hace falta desglosar, o el texto no cuadra: quien lo
+       lea vería un gastado pequeño y un disponible mucho menor de lo que
+       tocaría, sin nada que lo explique. */
+    if (r.fijos) {
+      lineas.push('Gastos fijos: ' + D.dinero(r.fijos, pre.moneda));
+      r.listaFijos.forEach((f) => {
+        lineas.push('· ' + f.nombre + ': ' + D.dinero(f.monto, pre.moneda));
+      });
+      lineas.push('Para compras: ' + D.dinero(r.paraCompras, pre.moneda));
+      lineas.push('Compras: ' + D.dinero(r.gastado, pre.moneda));
+      lineas.push((r.excedido ? 'Pasado de: ' : 'Disponible: ') +
+        D.dinero(Math.abs(r.disponible), pre.moneda));
+      lineas.push('Consumido: ' + r.consumido + ' % del presupuesto');
+    } else {
+      lineas.push('Gastado: ' + D.dinero(r.gastado, pre.moneda) + ' (' + r.consumido + ' %)');
+      lineas.push((r.excedido ? 'Pasado de: ' : 'Disponible: ') +
+        D.dinero(Math.abs(r.disponible), pre.moneda));
+    }
 
     if (r.diasRestantes !== null && r.diasRestantes > 0 && r.porDia) {
       lineas.push('Quedan ' + r.diasRestantes + (r.diasRestantes === 1 ? ' día' : ' días') +
@@ -626,7 +933,8 @@
       // pulse Cancelar.
       borradorPre = base ? Object.assign({}, base, {
         cortes: (base.cortes || [1, 16]).slice(),
-        limites: Object.assign({}, base.limites || {})
+        limites: Object.assign({}, base.limites || {}),
+        montos: Object.assign({}, base.montos || {})
       }) : {
         nombre: '',
         emoji: '💰',
@@ -736,6 +1044,13 @@
           ], b.moneda, (v) => { b.moneda = v; refrescar(); }),
           inMonto
         ]),
+
+        // Los periodos que tengan importe propio no se enteran de esto, y hay
+        // que decirlo: si no, quien subiera aquí el sueldo pensaría que se lo
+        // ha subido a todas las quincenas.
+        b.tipo === 'recurrente' && Store.periodosConMontoPropio(b).length
+          ? el('p.hint', { text: avisoDeMontosPropios(b) })
+          : null,
 
         // En los que se repiten no se pregunta ninguna fecha: los periodos
         // los marcan el calendario o los días de corte, y hasta dónde se puede
@@ -909,6 +1224,57 @@
     ]);
   }
 
+  /* Se nombran los periodos por su fecha de inicio, que es como se guardan.
+     Hasta tres; a partir de ahí sólo el número, o la frase no se acabaría. */
+  function avisoDeMontosPropios(b) {
+    const propios = Store.periodosConMontoPropio(b);
+    const cuantos = propios.length === 1
+      ? 'Hay 1 periodo con su propio presupuesto'
+      : 'Hay ' + propios.length + ' periodos con su propio presupuesto';
+    const cuales = propios.length <= 3
+      ? ' (' + propios.map((f) => 'el del ' + D.fechaMedia(f)).join(', ') + ')'
+      : '';
+    return cuantos + cuales + '. Cambiar el importe de aquí no los toca: ' +
+      'siguen con el que les pusiste, hasta que los devuelvas al de siempre.';
+  }
+
+  /* Todo lo que es DE UN PERIODO —su importe propio y sus gastos fijos— se
+     guarda con la fecha en que empieza ese periodo. Si se cambia cada cuánto se
+     repite, o los días de corte, esas fechas dejan de existir y lo guardado se
+     queda colgando: pegado a un periodo que ya no empieza ahí. Se borra, pero
+     avisando y con la opción de no hacerlo — lo puso alguien a mano.
+
+     Devuelve `true` si hay que borrarlo, `false` si no hay nada que borrar, y
+     'cancelado' si se prefiere no guardar nada. */
+  function avisoDeCalendario(id) {
+    const pre = Store.presupuesto(id);
+    const montos = Store.periodosConMontoPropio(pre).length;
+    const fijos = Store.periodosConFijos(pre).length;
+    if (!montos && !fijos) return false;
+
+    const partes = [];
+    if (montos) {
+      partes.push(montos === 1 ? 'un periodo con su propio presupuesto'
+        : montos + ' periodos con su propio presupuesto');
+    }
+    if (fijos) {
+      partes.push(fijos === 1 ? 'un periodo con gastos fijos apuntados'
+        : fijos + ' periodos con gastos fijos apuntados');
+    }
+
+    return confirm(
+      'Vas a cambiar cada cuánto se repite, así que los periodos pasan a empezar en otras ' +
+      'fechas. Tienes ' + partes.join(' y ') + ': se quedarían sin sitio, así que se van a ' +
+      'perder. ¿Sigo?') ? true : 'cancelado';
+  }
+
+  function calendarioTocado(id, datos) {
+    const antes = Store.presupuesto(id);
+    if (!antes || antes.tipo !== 'recurrente' || datos.tipo !== 'recurrente') return false;
+    if (antes.periodo !== datos.periodo) return true;
+    return Store.cortesDe(antes).join(',') !== datos.cortes.join(',');
+  }
+
   function guardarPresupuesto(id) {
     const b = borradorPre;
     if (!b.nombre.trim()) { alert('Ponle un nombre al presupuesto.'); return; }
@@ -933,7 +1299,11 @@
       fin: b.tipo === 'puntual' ? (b.fin || null) : null
     };
 
+    const limpiar = id && calendarioTocado(id, datos) && avisoDeCalendario(id);
+    if (limpiar === 'cancelado') return;
+
     const guardado = id ? Store.updatePresupuesto(id, datos) : Store.addPresupuesto(datos);
+    if (limpiar) { Store.olvidarMontosPropios(guardado.id); Store.olvidarFijos(guardado.id); }
     borradorPre = null;
     location.hash = '#/presupuesto/' + guardado.id;
   }
@@ -1721,7 +2091,9 @@
         el('details.tech', [
           el('summary', { text: 'Ajustes finos' }),
           el('div.tech-body', [
-            campo('Cuántos días atrás mirar en cada revisión', inDias),
+            campo('Cuántos días mira el primer import', inDias,
+              'Solo la primera vez. A partir de ahí cada revisión mira los últimos ' +
+              Gmail.DIAS_MINIMOS + ' días, y estira más si llevabas tiempo sin abrir la app.'),
             el('div.field', [
               el('span', { text: 'Remitentes que se buscan (uno por línea)' }),
               inRemitentes,
@@ -1771,7 +2143,7 @@
     hayBorrador, olvidarBorradores,
     textoDelEstado, compartirEstado, enlacesDeCompartir,
     helpers: {
-      header, volver, campo, vacio, segmentado, barra, barraDeEstado, dato,
+      header, volver, campo, vacio, segmentado, barra, barraDeResumen, barraDeEstado, dato,
       chipCategoria, chapaDeTopes, listaDeGastos, filaDeGasto
     }
   };

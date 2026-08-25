@@ -57,6 +57,20 @@
 
   function hayPermiso() { return !!token && Date.now() < caduca - 60000; }
 
+  /* Si Google no contesta ni que sí ni que no, hay que rendirse por nuestra
+     cuenta. Sin esto la promesa se queda colgada para siempre, `revisando` se
+     queda en cierto y el botón de revisar a mano se queda en «Revisando…» el
+     resto de la sesión, sin forma de volver a intentarlo. */
+  const ESPERA_MAXIMA = 90000;
+
+  /* Un error que viene de Google, no de nuestra comprobación previa. Solo estos
+     merecen que se reintente pidiendo el permiso entero. */
+  function errorDeGoogle(mensaje) {
+    const err = new Error(mensaje);
+    err.deGoogle = true;
+    return err;
+  }
+
   /* modo 'silencioso' no enseña ninguna ventana: sirve cuando ya se dio el
      permiso alguna vez y solo hace falta renovarlo. */
   function pedirPermiso(modo) {
@@ -79,18 +93,26 @@
     }
 
     return cargarConector().then(() => new Promise((cumplir, fallar) => {
+      let cerrado = false;
+      const acabar = (fn) => (valor) => { if (cerrado) return; cerrado = true; clearTimeout(reloj); fn(valor); };
+      const reloj = setTimeout(() => {
+        if (cerrado) return;
+        cerrado = true;
+        fallar(errorDeGoogle('Google no ha contestado. Vuelve a intentarlo.'));
+      }, ESPERA_MAXIMA);
+
       const cliente = google.accounts.oauth2.initTokenClient({
         client_id: clientId,
         scope: PERMISO,
         prompt: modo === 'silencioso' ? '' : 'consent',
         callback: (respuesta) => {
-          if (respuesta.error) { fallar(new Error(explicar(respuesta.error))); return; }
+          if (respuesta.error) { acabar(fallar)(errorDeGoogle(explicar(respuesta.error))); return; }
           token = respuesta.access_token;
           caduca = Date.now() + (Number(respuesta.expires_in) || 3600) * 1000;
           Store.setGmail({ autorizado: true });
-          cumplir(token);
+          acabar(cumplir)(token);
         },
-        error_callback: (err) => fallar(new Error(explicar(err && err.type)))
+        error_callback: (err) => acabar(fallar)(errorDeGoogle(explicar(err && err.type)))
       });
       cliente.requestAccessToken();
     }));
@@ -102,6 +124,16 @@
     if (c === 'popup_failed_to_open') return 'El navegador ha bloqueado la ventana de Google. Vuelve a pulsar el botón.';
     if (c === 'access_denied') return 'Google no ha dado el permiso. Si la app está en modo de pruebas, tu cuenta tiene que estar en la lista de usuarios de prueba.';
     if (c === 'invalid_client') return 'Google no reconoce este identificador. Cópialo otra vez desde Google Cloud → Clients: suele ser que se cortó al pegarlo, o que se pegó el «Client secret» en su lugar.';
+    /* Google pide volver a entrar. En una app en modo de pruebas esto pasa
+       SOLO porque sí cada pocos días: el permiso que da Google a las apps sin
+       publicar caduca, y entonces deja de poder renovarse a solas. No es que se
+       haya roto nada; hay que volver a dar el permiso a mano una vez. */
+    if (c === 'interaction_required' || c === 'login_required' || c === 'consent_required' ||
+        c === 'invalid_grant') {
+      return 'El permiso de Google ha caducado y hay que darlo otra vez. Pasa cada pocos días ' +
+        'mientras la app esté en modo de pruebas en Google Cloud. Pulsa «Revisar el correo ahora» ' +
+        'y acepta la ventana de Google.';
+    }
     return 'Google no ha dado el permiso' + (c ? ' (' + c + ').' : '.');
   }
 
@@ -121,7 +153,8 @@
       .then((r) => {
         if (r.status === 401) {
           token = null;
-          throw new Error('El permiso de Google ha caducado. Vuelve a pulsar «Conectar con Gmail».');
+          throw new Error('El permiso de Google ha caducado. Pulsa «Revisar el correo ahora» ' +
+            'y acepta la ventana de Google.');
         }
         if (r.status === 403) {
           throw new Error('Google ha rechazado la petición. Comprueba que la API de Gmail está activada en el proyecto ' +
@@ -178,38 +211,52 @@
     return D.aIso(new Date(ms));
   }
 
-  /* Dos formas de buscar, y la diferencia importa cuando esto se hace solo:
+  /* ---------- hasta dónde mira cada revisión --------------------------------
 
-     - **A fondo** (el botón): los últimos 30 días enteros. Vale para recuperar
-       cualquier cosa que se hubiera perdido.
-     - **Solo lo nuevo** (la revisión automática): desde la última vez. Gmail
-       entiende `after:` con segundos, así que se le pide exactamente eso.
+     **La primera vez, 30 días. A partir de ahí, 7.**
 
-     Sin esto, revisar al abrir la app se bajaría cien correos cada vez y se
-     comería los datos del móvil para no encontrar nada nuevo casi nunca.
+     La primera revisión tiene que traerse un mes entero: es la que llena la app
+     de golpe y no hay nada apuntado con qué comparar. Pero repetir ese mes en
+     cada revisión no sirve de nada —lo de hace tres semanas ya se decidió— y
+     cuesta cien peticiones y los datos del móvil cada vez.
 
-     Se dejan DOS DÍAS de solape hacia atrás a propósito: un correo puede
-     entregarse con retraso y aparecer con fecha anterior a la última revisión.
-     Volver a leerlo no cuesta nada —la huella impide que se duplique— pero
-     perderlo sí. */
+     Siete días, y no «desde la última revisión» a secas, porque siete días es
+     un colchón que aguanta lo que pasa de verdad: un fin de semana sin abrir la
+     app, un correo que el banco entrega con retraso, un viaje corto. Volver a
+     leer un correo ya visto no cuesta nada —la huella impide que se duplique—
+     pero perderlo sí.
+
+     Y si se ha estado más de una semana sin abrirla, se estira hasta la última
+     revisión en vez de quedarse en siete: **el colchón es un mínimo, no un
+     techo**. Un tope fijo ahí sería un agujero silencioso — el que vuelve de
+     dos semanas de vacaciones perdería una semana de compras sin enterarse.
+
+     `diasAtras` (Ajustes) es solo el primer import.
+  --------------------------------------------------------------------------- */
+
+  const DIAS_MINIMOS = 7;
   const SOLAPE_DIAS = 2;
 
-  function consulta(desdeIso) {
+  function ventanaDeRevision() {
+    const g = Store.gmail();
+    const primerImport = Number(g.diasAtras) || 30;
+    if (!g.ultimaRevision) return { dias: primerImport, primera: true };
+
+    const desde = new Date(g.ultimaRevision).getTime();
+    const pasados = Number.isFinite(desde) ? (Date.now() - desde) / 86400000 : 0;
+    const dias = Math.ceil(pasados) + SOLAPE_DIAS;
+    return { dias: Math.max(DIAS_MINIMOS, dias), primera: false };
+  }
+
+  function consulta() {
     const remitentes = Store.remitentes();
     const de = '(' + remitentes.map((r) => 'from:' + r).join(' OR ') + ')';
-
-    if (desdeIso) {
-      const desde = new Date(desdeIso).getTime() - SOLAPE_DIAS * 86400000;
-      return de + ' after:' + Math.floor(desde / 1000);
-    }
-    const dias = Number(Store.gmail().diasAtras) || 30;
-    return de + ' newer_than:' + dias + 'd';
+    return de + ' newer_than:' + ventanaDeRevision().dias + 'd';
   }
 
   /* Revisa el correo y deja en la bandeja lo que reconozca.
 
      opciones.alAvanzar(hechos, total) se llama en cada correo, para la barra.
-     opciones.soloNuevo mira solo desde la última revisión.
      opciones.silencioso no abre ninguna ventana de Google: si el permiso no se
      puede renovar sin preguntar, falla y ya está. Es lo que hace falta en la
      revisión automática, donde no ha habido ningún toque del usuario. */
@@ -223,10 +270,25 @@
       return Promise.reject(new Error('Todavía no has dado permiso a Google.'));
     }
 
-    const desde = op.soloNuevo ? g.ultimaRevision : null;
+    /* Detrás de esto hay un toque del usuario, así que sí se puede abrir la
+       ventana de Google. Importa más de lo que parece: el permiso que Google da
+       a una app en modo de pruebas CADUCA cada pocos días, y cuando eso pasa la
+       renovación callada deja de funcionar para siempre.
 
-    return pedirPermiso((primeraVez && !op.silencioso) ? 'interactivo' : 'silencioso')
-      .then(() => api('/messages?maxResults=' + MAXIMO_CORREOS + '&q=' + encodeURIComponent(consulta(desde))))
+       Antes se miraba solo si era la primera vez (`autorizado`), que se guarda
+       para siempre en cuanto se da el permiso una vez. Resultado: pasados unos
+       días la app no podía volver a pedirlo NUNCA, ni con el botón, y se
+       quedaba muda sin traer nada. Ahora se intenta primero en silencio —que es
+       lo normal y no molesta— y, si Google dice que hace falta pasar por la
+       ventana, se pasa. */
+    const puedeAbrirVentana = !op.silencioso;
+
+    return pedirPermiso((primeraVez && puedeAbrirVentana) ? 'interactivo' : 'silencioso')
+      .catch((err) => {
+        if (!puedeAbrirVentana || !err.deGoogle) throw err;
+        return pedirPermiso('interactivo');
+      })
+      .then(() => api('/messages?maxResults=' + MAXIMO_CORREOS + '&q=' + encodeURIComponent(consulta())))
       .then((lista) => {
         const ids = lista.messages || [];
         const cuenta = { total: ids.length, nuevos: 0, repetidos: 0, noReconocidos: 0 };
@@ -324,7 +386,7 @@
     if (!decision.toca) return Promise.resolve(null);
 
     revisando = true;
-    return revisar({ soloNuevo: true, silencioso: true })
+    return revisar({ silencioso: true })
       .then((cuenta) => {
         revisando = false;
         ultimoResumen = { texto: resumenLegible(cuenta), error: false };
@@ -395,10 +457,11 @@
         text: ultimoResumen.texto
       }) : null,
       g.ultimaRevision ? el('p.hint', {
-        text: 'Última revisión: ' + cuandoFue(g.ultimaRevision) +
+        text: 'Última revisión: ' + cuandoFue(g.ultimaRevision) + ' · ' + textoDeVentana() +
           (g.revisarAlAbrir === 'nunca' ? '' : ' · también revisa sola al abrir la app')
       }) : el('p.hint', {
-        text: 'Solo se leen los correos de los bancos de la lista, y solo para leerlos.'
+        text: 'La primera vez se traen los últimos ' + ventanaDeRevision().dias +
+          ' días. Solo se leen los correos de los bancos de la lista, y solo para leerlos.'
       }),
 
       // Si la revisión automática falló, aquí es donde se entera uno: no
@@ -408,6 +471,15 @@
           ' Prueba con el botón de arriba.'
       }) : null
     ]);
+  }
+
+  /* Cuánto va a mirar la próxima revisión. Se dice en la bandeja porque si no
+     no hay forma de saberlo, y explica que una revisión traiga «0 correos»
+     estando el buzón lleno de correos viejos del banco. */
+  function textoDeVentana() {
+    const v = ventanaDeRevision();
+    if (v.dias === DIAS_MINIMOS) return 'mira los últimos ' + DIAS_MINIMOS + ' días';
+    return 'mira los últimos ' + v.dias + ' días, por el tiempo que llevaba sin revisar';
   }
 
   function cuandoFue(iso) {
@@ -526,7 +598,7 @@
   global.Gmail = {
     bandeja, revisar, lanzarRevision, revisionAutomatica, tocaRevisar,
     desconectar, hayPermiso, estadoDeRevision, barraDeRevision, cuandoFue,
-    consulta, HORAS_DE_ESPERA, PERMISO
+    consulta, ventanaDeRevision, HORAS_DE_ESPERA, DIAS_MINIMOS, PERMISO
   };
 
 })(window);

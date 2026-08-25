@@ -342,9 +342,15 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
   background: var(--surface-2);
   overflow: hidden;
   border: 1px solid var(--line-soft);
+  display: flex;
 }
 
 .bar-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+
+/* El tramo de los gastos fijos, apagado y siempre a la izquierda: es dinero ya
+   comprometido, no una decisión de este periodo. El color lo distingue del
+   tramo de las compras sin necesidad de separador. */
+.bar-fijos { height: 100%; background: var(--muted); opacity: .55; border-radius: 999px 0 0 999px; }
 .bar-fill.is-warn { background: var(--warn); }
 .bar-fill.is-over { background: var(--danger); }
 
@@ -504,6 +510,88 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 .balance-l { font-size: .8125rem; color: var(--muted); }
 
 .balance-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+
+/* Con gastos fijos hay cuatro datos. En tres columnas no cabrían los importes
+   sin partirse, así que se pasa a dos por dos. */
+.balance-grid.is-cuatro { grid-template-columns: repeat(2, 1fr); }
+
+/* ---------- gastos fijos --------------------------------------------------- */
+
+.fijos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+
+.fijo {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.fijo-nombre { flex: 1; min-width: 0; font-size: .9375rem; }
+.fijo-monto { font-variant-numeric: tabular-nums; font-weight: 650; color: var(--muted); }
+
+.fijo-total {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  font-size: .875rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.fijo-acciones { display: flex; flex-wrap: wrap; gap: 14px; }
+.link-copiar { color: var(--muted); }
+
+.fijos-edit { display: flex; flex-direction: column; gap: 8px; }
+
+/* Nombre e importe en dos líneas: en 375 px los dos campos y la × en la misma
+   fila dejan el nombre en un hueco donde no cabe «Alquiler». */
+.fijo-edit {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 10px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.fijo-edit-monto { grid-column: 1 / -1; }
+
+/* Con el nombre de la fila delante a propósito: `.corte-quitar` se declara más
+   abajo y, a igualdad de peso, ganaría ella y la × se iría a flotar. */
+.fijo-edit .fijo-quitar { position: static; transform: none; align-self: center; }
+
+.hint.is-error { color: var(--danger); }
+
+/* ---------- el presupuesto de un periodo suelto ---------------------------
+
+   Cuando un periodo lleva un importe distinto al de siempre hay que verlo sin
+   buscarlo: la baldosa se marca en ámbar —el color de «ojo con esto», no el
+   del dinero disponible— y debajo se explica en una línea. */
+
+.stat.is-propio { border-color: rgba(251, 191, 36, .5); background: rgba(251, 191, 36, .08); }
+.stat.is-propio .stat-v { color: var(--warn); }
+
+.monto-periodo { display: flex; flex-direction: column; gap: 2px; }
+
+.monto-propio {
+  margin: 0;
+  font-size: .75rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.monto-acciones { display: flex; flex-wrap: wrap; gap: 14px; }
+.link-deshacer { color: var(--muted); }
+
+.monto-periodo.is-abierto { gap: 10px; }
+
+.monto-campo { display: flex; align-items: center; gap: 8px; }
+.monto-campo .in-amount-sm { flex: 1; min-width: 0; }
+.monto-simbolo { font-size: 1.25rem; font-weight: 650; color: var(--muted); }
 
 .pace {
   margin: 0;
@@ -739,7 +827,10 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 .limite-edit-cat { flex: 1; min-width: 0; font-size: .875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .limite-edit input { flex: none; width: 128px; }
 
-.limite-quitar { position: static; transform: none; flex: none; }
+/* Con el nombre de la fila delante por lo mismo que en `.fijo-quitar`: sin él,
+   `.corte-quitar` gana por ir después y la × se despega de su fila y se va a
+   flotar sobre el documento, a cientos de píxeles de donde debería estar. */
+.limite-edit .limite-quitar { position: static; transform: none; flex: none; }
 
 .limite-nuevo { display: flex; gap: 8px; align-items: stretch; }
 .limite-nuevo select { flex: 1; min-width: 0; }
@@ -939,6 +1030,13 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 .aviso-texto { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .aviso-texto strong { font-size: .9375rem; line-height: 1.25; }
 .aviso-texto span { font-size: .75rem; color: var(--muted); }
+
+/* El mismo aviso, pero cuando algo no funciona. En rojo y con la explicación
+   entera: aquí el texto es el aviso, así que no se corta. */
+.aviso-bandeja.is-error { background: rgba(248, 113, 113, .1); border-color: var(--danger); }
+.aviso-bandeja.is-error:active { background: rgba(248, 113, 113, .18); }
+.aviso-num.is-error { background: var(--danger); color: #2A0A0A; }
+.aviso-bandeja.is-error .aviso-texto span { color: var(--ink); line-height: 1.4; }
 .aviso-flecha { flex: none; color: var(--accent); font-size: 1.35rem; line-height: 1; }
 
 .pendientes { display: flex; flex-direction: column; gap: 12px; }

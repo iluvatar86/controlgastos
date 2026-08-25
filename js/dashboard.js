@@ -64,6 +64,7 @@
       Views.helpers.header('Resumen', D.fechaLarga(hoy)),
 
       avisoDeBandeja(),
+      avisoDeCorreoParado(),
 
       el('div.tiles', [
         baldosa('Hoy', D.dinero(hoyTotal, base)),
@@ -99,6 +100,30 @@
         // El número lo lleva la chapa de al lado; repetirlo aquí sobra.
         el('strong', { text: n === 1 ? 'Una compra detectada en el correo' : 'Compras detectadas en el correo' }),
         el('span', { text: 'Toca para revisarlas y apuntarlas' })
+      ]),
+      el('span.aviso-flecha', { text: '›' })
+    ]);
+  }
+
+  /* Si la revisión del correo lleva fallando, hay que decirlo AQUÍ.
+
+     Este fue el fallo de verdad, y no es de los que rompen nada: el aviso
+     existía, pero solo dentro de la bandeja, que es justo la pantalla a la que
+     nadie entra cuando no aparece nada nuevo. Desde el Resumen —donde se está
+     todo el día— «Google ya no me deja leer el correo» y «hoy no has comprado
+     nada» se veían exactamente igual: en silencio.
+
+     Una app que deja de funcionar tiene que decirlo en la pantalla que se mira,
+     no en la que habría que abrir para descubrirlo. */
+  function avisoDeCorreoParado() {
+    const g = Store.gmail();
+    if (!g.clientId || !g.autorizado || !g.ultimoFallo) return null;
+
+    return el('a.aviso-bandeja.is-error', { href: '#/bandeja' }, [
+      el('span.aviso-num.is-error', { text: '!' }),
+      el('div.aviso-texto', [
+        el('strong', { text: 'No se está leyendo el correo' }),
+        el('span', { text: g.ultimoFallo })
       ]),
       el('span.aviso-flecha', { text: '›' })
     ]);
@@ -147,12 +172,15 @@
             el('span.pre-avail-l', { text: r.excedido ? 'de más' : 'disponible' })
           ])
         ]),
-        Views.helpers.barra(r.consumido, r.excedido),
+        Views.helpers.barraDeResumen(r),
         el('div.pre-foot', [
           el('span', {
             text: r.diasRestantes !== null && r.diasRestantes > 0 && r.porDia
               ? D.dinero(r.porDia, pre.moneda) + ' al día durante ' + r.diasRestantes + ' días'
-              : D.dinero(r.gastado, pre.moneda) + ' de ' + D.dinero(r.asignado, pre.moneda)
+              : (r.fijos
+                ? D.dinero(r.gastado, pre.moneda) + ' en compras · ' +
+                  D.dinero(r.fijos, pre.moneda) + ' en fijos'
+                : D.dinero(r.gastado, pre.moneda) + ' de ' + D.dinero(r.asignado, pre.moneda))
           }),
           el('span', { text: r.consumido + ' %' })
         ]),
