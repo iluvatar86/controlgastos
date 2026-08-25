@@ -72,6 +72,7 @@
       ultimoFallo: null         // por qué falló la última revisión automática
     },
     pendientes: [],             // gastos detectados en el correo, sin confirmar
+    norecon: [],                // correos del banco que no se pudieron leer
     huellas: []                 // los que ya se apuntaron o descartaron
   };
 
@@ -1001,6 +1002,50 @@
     save();
   }
 
+  /* ---------- los correos que no se pudieron leer ---------------------------
+
+     Antes la revisión decía «3 sin reconocer» y los tiraba. Eso es lo peor de
+     los dos mundos: preocupa —parece que se han perdido tres compras— y no deja
+     hacer nada al respecto, porque no se puede ni ver de qué correos hablaba.
+
+     Ahora se guardan los cuatro datos que caben sin ocupar sitio: quién lo
+     manda, el asunto, la fecha y el resumen corto que ya viene de Gmail. Con
+     eso se ve en un vistazo si era una compra de verdad o el extracto del mes,
+     y si era una compra se puede apuntar a mano desde ahí.
+
+     El cuerpo del correo NO se guarda: ocuparía muchísimo y no hace falta para
+     decidir. Para leerlo entero está el enlace al correo en Gmail.
+
+     Se recuerda cuáles se descartaron —en `huellas`, con `nr|` delante— para
+     que no vuelvan en cada revisión: siguen en el buzón y se leerían otra vez.
+  --------------------------------------------------------------------------- */
+
+  const TOPE_NORECON = 30;
+
+  function noReconocidos() { return load().norecon || []; }
+
+  function addNoReconocido(datos) {
+    const d = load();
+    if (!d.norecon) d.norecon = [];
+    if (!datos || !datos.id) return false;
+    if (d.huellas.indexOf('nr|' + datos.id) >= 0) return false;
+    if (d.norecon.some((x) => x.id === datos.id)) return false;
+    d.norecon.push(Object.assign({ visto: nowIso() }, datos));
+    // Los más viejos se caen solos: esto es para mirar lo de estos días, no un
+    // archivo de todo lo que el banco haya mandado nunca.
+    if (d.norecon.length > TOPE_NORECON) d.norecon = d.norecon.slice(-TOPE_NORECON);
+    save();
+    return true;
+  }
+
+  function cerrarNoReconocido(id) {
+    const d = load();
+    if (d.huellas.indexOf('nr|' + id) < 0) d.huellas.push('nr|' + id);
+    if (d.huellas.length > 2000) d.huellas = d.huellas.slice(-2000);
+    d.norecon = (d.norecon || []).filter((x) => x.id !== id);
+    save();
+  }
+
   function nowIso() {
     const now = new Date();
     return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString();
@@ -1055,6 +1100,7 @@
     gastos, gasto, gastosDe, addGasto, updateGasto, deleteGasto, montoEnMonedaDe,
     asignaciones, presupuestosDe, primerPresupuesto, estaEn, montoAsignadoEn, convertir,
     gmail, setGmail, remitentes, pendientes, pendiente, addPendiente, cerrarPendiente,
+    noReconocidos, addNoReconocido, cerrarNoReconocido,
     resumen, porCategoria, porDia,
     limitesDe, limiteDe, avisoDeLimites, setLimite, estadoDeTope, AVISO,
     exportAll, importAll, clearAll, stats,

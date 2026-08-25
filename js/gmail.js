@@ -306,7 +306,21 @@
               esHtml: cuerpo.esHtml,
               fechaCorreo: fechaDelCorreo(mensaje)
             });
-            if (!datos) { cuenta.noReconocidos++; return; }
+            if (!datos) {
+              cuenta.noReconocidos++;
+              // Se guarda lo justo para poder mirarlo después. Sin esto, la
+              // revisión decía «3 sin reconocer» y no había forma de saber
+              // cuáles eran ni de apuntarlos a mano.
+              Store.addNoReconocido({
+                id: item.id,
+                hilo: mensaje.threadId || item.threadId || '',
+                de: cabecera(mensaje.payload, 'From'),
+                asunto: cabecera(mensaje.payload, 'Subject'),
+                fecha: fechaDelCorreo(mensaje),
+                resumen: String(mensaje.snippet || '').slice(0, 300)
+              });
+              return;
+            }
             datos.mensajeId = item.id;
             if (Store.addPendiente(datos)) cuenta.nuevos++; else cuenta.repetidos++;
           });
@@ -439,8 +453,82 @@
           Store.pendientes().slice().forEach((p) => Store.cerrarPendiente(p.id));
           App.render();
         }
+      }) : null,
+
+      sinReconocer(presupuestos)
+    ]);
+  }
+
+  /* Los correos que la app no supo leer.
+
+     Van en un desplegable cerrado y al final: la mayoría de las veces no son
+     compras —son el extracto del mes, un aviso de seguridad, una promoción— y
+     no hay nada que hacer con ellos. Pero cuando sí lo son, aquí está la
+     salida: apuntarlo a mano con la fecha ya puesta, o abrirlo en Gmail para
+     leerlo entero. */
+  function sinReconocer(presupuestos) {
+    const lista = Store.noReconocidos().slice().sort((a, b) => b.fecha.localeCompare(a.fecha));
+    if (!lista.length) return null;
+
+    return el('details.compartir', [
+      el('summary', {
+        text: '✉  ' + lista.length + (lista.length === 1
+          ? ' correo que no se pudo leer' : ' correos que no se pudieron leer')
+      }),
+      el('div.compartir-body', [
+        el('p.muted', {
+          text: 'Casi siempre no son compras: extractos, avisos de seguridad, promociones. ' +
+            'Si alguno sí lo es, apúntalo a mano desde aquí y dime el asunto, que puedo ' +
+            'enseñarle a la app a leer ese formato.'
+        }),
+        el('div.norecon', lista.map((n) => tarjetaSinReconocer(n, presupuestos)))
+      ])
+    ]);
+  }
+
+  function tarjetaSinReconocer(n, presupuestos) {
+    return el('article.card.norecon-item', [
+      el('div.pendiente-head', [
+        el('span.banco-chip', { text: remitenteCorto(n.de) }),
+        el('span.ref', { text: D.fechaMedia(n.fecha) })
+      ]),
+      el('strong.norecon-asunto', { text: n.asunto || '(sin asunto)' }),
+      n.resumen ? el('p.norecon-resumen', { text: n.resumen }) : null,
+      el('div.form-actions', [
+        el('button.btn', {
+          type: 'button', text: 'No es un gasto',
+          onclick: () => { Store.cerrarNoReconocido(n.id); App.render(); }
+        }),
+        presupuestos.length ? el('button.btn.btn-primary', {
+          type: 'button', text: 'Apuntarlo a mano',
+          onclick: () => {
+            // Se le pasa al formulario lo poco que se sabe seguro: la fecha del
+            // correo y de dónde viene. El importe hay que leerlo y escribirlo.
+            Views.sembrarGasto({
+              fecha: n.fecha,
+              nota: remitenteCorto(n.de),
+              origenCorreo: n.id
+            });
+            location.hash = '#/nuevo';
+          }
+        }) : null
+      ]),
+      n.hilo ? el('a.link-soft', {
+        href: 'https://mail.google.com/mail/u/0/#all/' + n.hilo,
+        target: '_blank', rel: 'noopener noreferrer',
+        text: 'Abrir el correo en Gmail ↗'
       }) : null
     ]);
+  }
+
+  /* «BAC Credomatic <notificacion@baccredomatic.cr>» → «BAC Credomatic».
+     Y si viene sin nombre, el dominio, que ya dice de quién es. */
+  function remitenteCorto(de) {
+    const s = String(de || '').trim();
+    const conNombre = s.match(/^\s*"?([^"<]+?)"?\s*</);
+    if (conNombre && conNombre[1].trim()) return conNombre[1].trim();
+    const correo = s.match(/@([^>\s]+)/);
+    return correo ? correo[1] : (s || 'Correo del banco');
   }
 
   function barraDeRevision() {

@@ -1033,6 +1033,26 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 
 /* El mismo aviso, pero cuando algo no funciona. En rojo y con la explicación
    entera: aquí el texto es el aviso, así que no se corta. */
+/* ---------- correos que no se pudieron leer -------------------------------- */
+
+.norecon { display: flex; flex-direction: column; gap: 10px; }
+
+.norecon-item { gap: 8px; }
+.norecon-asunto { font-size: .9375rem; line-height: 1.3; }
+
+/* El resumen que manda Gmail viene sin saltos y puede ser largo: se corta a
+   tres líneas, que es de sobra para saber de qué va el correo. */
+.norecon-resumen {
+  margin: 0;
+  font-size: .8125rem;
+  line-height: 1.45;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .aviso-bandeja.is-error { background: rgba(248, 113, 113, .1); border-color: var(--danger); }
 .aviso-bandeja.is-error:active { background: rgba(248, 113, 113, .18); }
 .aviso-num.is-error { background: var(--danger); color: #2A0A0A; }

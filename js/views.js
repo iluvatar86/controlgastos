@@ -1331,6 +1331,21 @@
 
   let borradorGasto = null;
 
+  /* Lo que otra pantalla quiere dejar ya escrito en el próximo gasto nuevo.
+
+     Lo usa la bandeja cuando se apunta a mano un correo que la app no supo
+     leer: la fecha del correo y de qué banco venía se saben seguro, así que no
+     hay por qué volver a escribirlos. El importe no, porque adivinarlo sería
+     peor que dejarlo en blanco.
+
+     Se gasta la primera vez que se usa, para que no reaparezca en el siguiente
+     gasto que se apunte por su cuenta. */
+  let semillaGasto = null;
+
+  // Se tira el borrador que hubiera: si no, un gasto a medio escribir se
+  // quedaría con su marca y la semilla no llegaría a aplicarse nunca.
+  function sembrarGasto(datos) { semillaGasto = datos || null; borradorGasto = null; }
+
   function formGasto(opciones) {
     const id = opciones.id || null;
     const editando = !!id;
@@ -1382,6 +1397,14 @@
             ? Store.fechaDeReferencia(preElegido) : D.hoy(),
           tipoCambio: Store.ajustes().tipoCambio
         };
+
+        if (semillaGasto) {
+          if (semillaGasto.fecha) borradorGasto.fecha = semillaGasto.fecha;
+          if (semillaGasto.nota) borradorGasto.nota = semillaGasto.nota;
+          if (semillaGasto.comercio) borradorGasto.comercio = semillaGasto.comercio;
+          if (semillaGasto.origenCorreo) borradorGasto.origenCorreo = semillaGasto.origenCorreo;
+          semillaGasto = null;
+        }
       }
       borradorGasto.__marca = marca;
     }
@@ -1759,6 +1782,11 @@
 
     const destino = b.presupuestos[0];
     if (id) Store.updateGasto(id, datos); else Store.addGasto(datos);
+
+    // Si esto venía de un correo que la app no supo leer, ya está resuelto: se
+    // saca de esa lista para que no siga pidiendo que se decida algo.
+    if (!id && b.origenCorreo) Store.cerrarNoReconocido(b.origenCorreo);
+
     borradorGasto = null;
     location.hash = '#/presupuesto/' + destino;
   }
@@ -2140,7 +2168,7 @@
   global.Views = {
     presupuestos, presupuestoDetalle, formPresupuesto, formGasto,
     historial, categoriasView, ajustes,
-    hayBorrador, olvidarBorradores,
+    hayBorrador, olvidarBorradores, sembrarGasto,
     textoDelEstado, compartirEstado, enlacesDeCompartir,
     helpers: {
       header, volver, campo, vacio, segmentado, barra, barraDeResumen, barraDeEstado, dato,
