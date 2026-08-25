@@ -5,11 +5,12 @@
    los teléfonos seguirán abriendo la copia guardada de la versión anterior.
 --------------------------------------------------------------------------- */
 
-const VERSION = 'controlgastos-v17';
+const VERSION = 'controlgastos-v18';
 
 const FILES = [
   './',
   './index.html',
+  './guia.html',
   './app.css',
   './manifest.webmanifest',
   './js/dom.js',

@@ -14,10 +14,10 @@
   const EMOJIS_CATEGORIA = ['🛒', '🍽️', '💊', '⛽', '🚌', '💡', '🏥', '🎬', '👕', '🏠', '📦',
     '🏫', '🏦', '☕', '🎮', '📚', '🐶', '💇', '🧾', '🎂', '🏋️', '🎧'];
 
-  /* Guía de configuración de la conexión con Gmail. Vive fuera de la app a
-     propósito: son pantallas de Google que cambian de sitio cada pocos meses,
-     y así se corrige sin tener que publicar la app otra vez. */
-  const GUIA_GMAIL = 'https://claude.ai/code/artifact/8febf01b-59cc-4ae0-a17c-0f0435ae4550';
+  /* Guía de configuración de la conexión con Gmail: `guia.html`, al lado de la
+     app. La dirección es relativa a propósito, para que funcione igual en el
+     servidor local, en la dirección publicada y en cualquier otra copia. */
+  const GUIA_GMAIL = 'guia.html';
 
   /* ---------- piezas sueltas ------------------------------------------------ */
 

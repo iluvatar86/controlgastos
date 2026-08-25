@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Conectar Gmail · Control de Gastos</title>
+<meta name="description" content="Guía paso a paso para que Control de Gastos lea los correos de compra de tu banco.">
+<meta name="theme-color" content="#F6F9F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0C1116" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="icons/icon-192.png" sizes="192x192">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<style>
+  /* Paleta clara: neutros con sesgo verde, para que el acento no flote suelto.
+     La oscura es literalmente la de la app, para que se reconozca. */
+  :root {
+    --ground: #F6F9F7;
+    --surface: #FFFFFF;
+    --surface-2: #EEF3F0;
+    --ink: #0F201A;
+    --ink-soft: #375046;
+    --muted: #5F7770;
+    --accent: #0B8F62;
+    --accent-soft: #E0F3EB;
+    --warn: #9A5B08;
+    --warn-soft: #FBF0DF;
+    --danger: #A8322A;
+    --danger-soft: #FBECEA;
+    --line: #DDE7E2;
+    --line-hard: #C4D4CD;
+
+    --display: "Archivo", "Segoe UI", system-ui, sans-serif;
+    --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+    --measure: 66ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0C1116;
+      --surface: #141B22;
+      --surface-2: #1B242D;
+      --ink: #E8EEF3;
+      --ink-soft: #C3D2DA;
+      --muted: #8FA3B3;
+      --accent: #34D399;
+      --accent-soft: #14302A;
+      --warn: #FBBF24;
+      --warn-soft: #2B2313;
+      --danger: #F87171;
+      --danger-soft: #2C1918;
+      --line: #26323C;
+      --line-hard: #35434F;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0C1116;
+    --surface: #141B22;
+    --surface-2: #1B242D;
+    --ink: #E8EEF3;
+    --ink-soft: #C3D2DA;
+    --muted: #8FA3B3;
+    --accent: #34D399;
+    --accent-soft: #14302A;
+    --warn: #FBBF24;
+    --warn-soft: #2B2313;
+    --danger: #F87171;
+    --danger-soft: #2C1918;
+    --line: #26323C;
+    --line-hard: #35434F;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .hoja {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 28px 24px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 44px;
+  }
+
+  p, li { max-width: var(--measure); }
+  p { margin: 0; }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+  /* ---------- volver ---------- */
+
+  .volver {
+    font-family: var(--mono);
+    font-size: .78rem;
+    letter-spacing: .04em;
+    color: var(--muted);
+    text-decoration: none;
+    align-self: flex-start;
+  }
+  .volver:hover { color: var(--accent); }
+
+  /* ---------- cabecera ---------- */
+
+  .cabecera { display: flex; flex-direction: column; gap: 16px; }
+
+  .antetitulo {
+    font-family: var(--mono);
+    font-size: .75rem;
+    font-weight: 600;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(2.1rem, 6vw, 3.1rem);
+    line-height: 1.06;
+    letter-spacing: -.025em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .entrada { font-size: 1.13rem; color: var(--ink-soft); }
+
+  .ficha {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    overflow: hidden;
+    margin: 0;
+  }
+
+  .ficha div {
+    flex: 1 1 150px;
+    padding: 14px 18px;
+    border-right: 1px solid var(--line);
+  }
+  .ficha div:last-child { border-right: 0; }
+
+  .ficha dt {
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 3px;
+  }
+  .ficha dd { margin: 0; font-weight: 600; font-size: .95rem; }
+
+  /* ---------- secciones ---------- */
+
+  section { display: flex; flex-direction: column; gap: 20px; }
+
+  h2 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.55rem;
+    letter-spacing: -.015em;
+    line-height: 1.2;
+    margin: 0;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--ink);
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 1.06rem;
+    letter-spacing: -.01em;
+    margin: 0;
+  }
+
+  .nota { color: var(--muted); font-size: .95rem; }
+
+  /* ---------- pasos numerados ----------
+     La numeración es real: es un procedimiento y el orden importa. */
+
+  .pasos { display: flex; flex-direction: column; gap: 14px; counter-reset: paso; }
+
+  .paso {
+    display: grid;
+    grid-template-columns: 46px 1fr;
+    gap: 6px 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 22px 24px;
+  }
+
+  .paso::before {
+    counter-increment: paso;
+    content: counter(paso, decimal-leading-zero);
+    grid-row: 1 / span 2;
+    font-family: var(--mono);
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.1;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .paso h3 { grid-column: 2; align-self: center; }
+  .paso .cuerpo { grid-column: 2; display: flex; flex-direction: column; gap: 14px; }
+
+  .paso ol, .paso ul { margin: 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 7px; }
+
+  @media (max-width: 560px) {
+    .paso { grid-template-columns: 1fr; gap: 10px; padding: 20px; }
+    .paso::before { grid-row: auto; font-size: 1.15rem; }
+    .paso h3, .paso .cuerpo { grid-column: 1; }
+  }
+
+  /* ---------- valores exactos que hay que copiar ---------- */
+
+  .valor {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--surface-2);
+    border: 1px solid var(--line-hard);
+    border-radius: 4px;
+    padding: 12px 14px;
+  }
+
+  .valor span {
+    font-family: var(--mono);
+    font-size: .66rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .valor code {
+    font-family: var(--mono);
+    font-size: .92rem;
+    font-weight: 600;
+    color: var(--ink);
+    overflow-x: auto;
+    white-space: nowrap;
+    padding-bottom: 2px;
+  }
+
+  code:not(.valor code):not(.err code) {
+    font-family: var(--mono);
+    font-size: .88em;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+
+  /* ---------- avisos ---------- */
+
+  .aviso {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-radius: 4px;
+    padding: 14px 16px;
+    font-size: .95rem;
+  }
+
+  .aviso b {
+    font-family: var(--mono);
+    font-size: .66rem;
+    font-weight: 600;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+  }
+
+  .aviso p { max-width: none; }
+
+  .aviso.ojo { background: var(--warn-soft); color: var(--warn); }
+  .aviso.ojo p { color: var(--ink-soft); }
+  .aviso.clave { background: var(--accent-soft); color: var(--accent); }
+  .aviso.clave p { color: var(--ink-soft); }
+
+  /* ---------- errores ---------- */
+
+  .errores { display: flex; flex-direction: column; gap: 12px; }
+
+  .err {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .err code {
+    font-family: var(--mono);
+    font-size: .9rem;
+    font-weight: 600;
+    color: var(--danger);
+    background: var(--danger-soft);
+    border-radius: 3px;
+    padding: 3px 8px;
+    align-self: flex-start;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .err .que { font-size: .95rem; color: var(--muted); }
+  .err .arreglo { font-size: .98rem; }
+
+  /* ---------- pie ---------- */
+
+  .pie {
+    border-top: 1px solid var(--line);
+    padding-top: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-size: .9rem;
+    color: var(--muted);
+  }
+  .pie p { max-width: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hoja">
+
+  <a class="volver" href="./">&larr;&nbsp; Volver a Control de Gastos</a>
+
+  <header class="cabecera">
+    <p class="antetitulo">Control de Gastos</p>
+    <h1>Que la app apunte tus compras sola</h1>
+    <p class="entrada">
+      Control de Gastos puede leer los correos que te manda el banco cada vez que
+      pagas con tarjeta, y proponerte el gasto ya rellenado: comercio, monto, fecha
+      y una categoría adivinada. Tú solo confirmas o descartas.
+      Para eso hay que darle permiso una vez. Esto explica cómo.
+    </p>
+
+    <dl class="ficha">
+      <div><dt>Tiempo</dt><dd>10 minutos</dd></div>
+      <div><dt>Coste</dt><dd>Gratis, sin tarjeta</dd></div>
+      <div><dt>Se hace</dt><dd>Una sola vez</dd></div>
+    </dl>
+  </header>
+
+  <section>
+    <h2>Antes de empezar</h2>
+    <p>Esto solo te sirve si se cumplen las tres cosas:</p>
+    <ul>
+      <li>Tienes cuenta de <b>Gmail</b>.</li>
+      <li>Eres cliente de <b>BAC Credomatic</b>, <b>Davivienda&nbsp;(DAVIbank)</b> o <b>Promerica</b>,
+        que son los tres bancos cuyos correos sabe leer la app.</li>
+      <li>El banco te <b>manda correo</b> por cada compra. Búscalo en tu Gmail: si solo te llega
+        aviso a la app del banco y no por correo, aquí no hay nada que leer.</li>
+    </ul>
+
+    <div class="aviso clave">
+      <b>Hazlo en la computadora</b>
+      <p>
+        La consola de Google en el celular es un suplicio para esto: son varios formularios
+        largos y un campo donde hay que pegar un código de setenta caracteres. En la
+        computadora son diez minutos. Luego pegas el código en el celular y listo.
+      </p>
+    </div>
+
+    <p class="nota">
+      Cada persona necesita su propio código. No se puede compartir el de otro: el permiso de
+      Google es siempre personal y sobre tu propia cuenta.
+    </p>
+  </section>
+
+  <section>
+    <h2>Los seis pasos</h2>
+
+    <div class="pasos">
+
+      <article class="paso">
+        <h3>Crear un proyecto en Google</h3>
+        <div class="cuerpo">
+          <p>Abre <a href="https://console.cloud.google.com/projectcreate">console.cloud.google.com/projectcreate</a>
+            y entra con tu cuenta de Gmail.</p>
+          <p>Ponle de nombre <code>ControlGastos</code>. Si te pregunta por una organización,
+            deja «Sin organización». No pide tarjeta ni cobra nada.</p>
+        </div>
+      </article>
+
+      <article class="paso">
+        <h3>Activar la API de Gmail</h3>
+        <div class="cuerpo">
+          <p>Abre <a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com">console.cloud.google.com/apis/library/gmail.googleapis.com</a>
+            y pulsa el botón azul <b>Habilitar</b>.</p>
+          <p>Antes de pulsarlo, mira arriba a la izquierda que esté seleccionado el proyecto que
+            acabas de crear. Es fácil activarlo en el proyecto equivocado y luego no entender
+            por qué falla.</p>
+        </div>
+      </article>
+
+      <article class="paso">
+        <h3>Configurar el permiso</h3>
+        <div class="cuerpo">
+          <p>Abre <a href="https://console.cloud.google.com/auth/overview">console.cloud.google.com/auth/overview</a>
+            y pulsa <b>Get started</b>. Te pedirá cuatro cosas seguidas:</p>
+          <ol>
+            <li><b>App Information</b> — nombre <code>ControlGastos</code> y tu correo de contacto.</li>
+            <li><b>Audience</b> — elige <b>External</b>. («Internal» solo existe si tienes cuenta de empresa.)</li>
+            <li><b>Contact Information</b> — tu correo otra vez.</li>
+            <li><b>Finish</b> — marca la casilla de las condiciones y pulsa <b>Create</b>.</li>
+          </ol>
+          <p class="nota">
+            Google le cambió el nombre a esta sección hace poco. Si en tu pantalla pone
+            «Pantalla de consentimiento de OAuth» en vez de «Google Auth Platform», es lo mismo.
+          </p>
+        </div>
+      </article>
+
+      <article class="paso">
+        <h3>Añadirte como usuario de prueba</h3>
+        <div class="cuerpo">
+          <p>En el menú de la izquierda entra en <b>Audience</b>. Verás que el estado es
+            <b>Testing</b>. Busca la sección <b>Test users</b>, pulsa <b>Add users</b> y
+            escribe tu propio correo de Gmail.</p>
+
+          <div class="aviso ojo">
+            <b>El paso que más se olvida</b>
+            <p>
+              Sin esto, cuando la app pida permiso Google te responde «acceso denegado» con un
+              mensaje que no explica por qué. Si más adelante te pasa, vuelve aquí.
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <article class="paso">
+        <h3>Crear el identificador</h3>
+        <div class="cuerpo">
+          <p>En el menú de la izquierda entra en <b>Clients</b> y pulsa <b>Create client</b>.</p>
+          <ol>
+            <li><b>Application type</b>: <b>Web application</b>. Este es el tipo correcto; los otros no sirven.</li>
+            <li><b>Name</b>: lo que quieras, por ejemplo <code>ControlGastos web</code>. Es solo para ti.</li>
+            <li>En <b>Authorized JavaScript origins</b>, pulsa <b>Add URI</b> y pega exactamente esto:</li>
+          </ol>
+
+          <div class="valor">
+            <span>Origen autorizado</span>
+            <code>https://iluvatar86.github.io</code>
+          </div>
+
+          <div class="aviso ojo">
+            <b>Solo el dominio, sin la ruta</b>
+            <p>
+              Es <code>https://iluvatar86.github.io</code> y nada más. <b>No</b> le pongas
+              <code>/controlgastos/</code> al final. Si se la pones, Google rechaza la conexión
+              con un error que no dice qué está mal. Y no hace falta rellenar
+              «URI de redireccionamiento».
+            </p>
+          </div>
+
+          <p>Pulsa <b>Create</b>. Sale una ventana con dos códigos: <b>Client ID</b> y
+            <b>Client secret</b>. <b>Copia solo el Client ID</b>, el largo que acaba en
+            <code>.apps.googleusercontent.com</code>. El secret esta app no lo usa.</p>
+
+          <div class="aviso clave">
+            <b>Usa el botón de copiar</b>
+            <p>
+              No lo selecciones a mano. Son unos setenta caracteres y cortarlo a medias es el
+              fallo más común de todo esto.
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <article class="paso">
+        <h3>Pegarlo en la app</h3>
+        <div class="cuerpo">
+          <p>Este último paso ya no es en Google: es dentro de Control de Gastos.</p>
+          <ol>
+            <li>Abre la app y ve a la pestaña <b>Ajustes</b>, la última de la barra de abajo.</li>
+            <li>Baja hasta el final y toca <b>Leer los correos del banco</b>.</li>
+            <li>Pega el código en el campo <b>Identificador de Google (Client ID)</b>.</li>
+            <li>Toca fuera del campo. Aparecerán dos botones nuevos y, debajo del campo,
+              «Guardado» con el número de caracteres.</li>
+            <li>Pulsa <b>Revisar el correo</b> y acepta el permiso que te pide Google.</li>
+          </ol>
+
+          <div class="aviso ojo">
+            <b>Saldrá un aviso que asusta</b>
+            <p>
+              Google dirá <b>«Google no ha verificado esta aplicación»</b>. Es lo esperado: es
+              tu propia app, recién creada, y Google no revisa las apps privadas. Pulsa
+              <b>Configuración avanzada</b> y luego <b>Ir a ControlGastos</b>. No hay nada
+              inseguro: eres tú dándote permiso a ti mismo sobre tu propio correo.
+            </p>
+          </div>
+
+          <p>Si todo fue bien, tus compras de los últimos treinta días aparecen en la bandeja,
+            esperando que las confirmes.</p>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>Si algo falla</h2>
+    <p>Los mensajes de Google son crípticos, pero cada uno significa una cosa concreta.</p>
+
+    <div class="errores">
+
+      <div class="err">
+        <code>Error 401: invalid_client</code>
+        <p class="que">«The OAuth client was not found.» Google no reconoce el código que le llega.</p>
+        <p class="arreglo">
+          Casi siempre es que <b>se cortó al pegarlo</b>, o que pegaste el <b>Client secret</b>
+          (empieza por <code>GOCSPX-</code>) en lugar del Client ID. Vuelve al paso 5, cópialo
+          con el botón de copiar y pégalo otra vez. La app te dice cuántos caracteres tiene
+          guardados: deben ser unos setenta.
+        </p>
+      </div>
+
+      <div class="err">
+        <code>Acceso denegado · access_denied</code>
+        <p class="que">Google encontró la app, pero no te deja entrar.</p>
+        <p class="arreglo">
+          Tu correo no está en la lista de usuarios de prueba. Vuelve al <b>paso 4</b> y añádelo.
+        </p>
+      </div>
+
+      <div class="err">
+        <code>Error 403 al revisar el correo</code>
+        <p class="que">El permiso funcionó, pero Gmail rechaza la petición.</p>
+        <p class="arreglo">
+          Falta activar la API de Gmail, o la activaste en otro proyecto. Vuelve al
+          <b>paso 2</b> y comprueba que arriba esté seleccionado el proyecto correcto.
+        </p>
+      </div>
+
+      <div class="err">
+        <code>No pasa nada al pulsar el botón</code>
+        <p class="que">La ventana de Google no llega a abrirse.</p>
+        <p class="arreglo">
+          El navegador bloqueó la ventana emergente. Suele avisar con un icono en la barra de
+          direcciones: permite las ventanas emergentes para este sitio y vuelve a pulsar.
+        </p>
+      </div>
+
+      <div class="err">
+        <code>No hay ningún correo nuevo de los bancos</code>
+        <p class="que">Conectó bien, pero no encuentra nada.</p>
+        <p class="arreglo">
+          O tu banco no es de los tres, o no te manda correos de compra. Búscalos en Gmail para
+          salir de dudas. En <b>Ajustes finos</b>, dentro de la misma sección, puedes ver y
+          cambiar las direcciones que busca.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>Qué ve la app y qué no</h2>
+
+    <ul>
+      <li><b>Permiso de solo lectura.</b> La app puede leer, nunca escribir, borrar ni enviar.</li>
+      <li><b>Solo busca a tu banco.</b> La búsqueda se limita a las direcciones de los tres
+        bancos. El resto del buzón ni se toca.</li>
+      <li><b>Nada se apunta solo.</b> Las compras caen en una bandeja y no entran en ningún
+        presupuesto hasta que las confirmas.</li>
+      <li><b>Tus datos no salen del teléfono.</b> No hay servidor ni cuenta: todo vive en el
+        navegador donde usas la app.</li>
+      <li><b>Solo mira el correo con la app abierta.</b> Una app web no puede leer el buzón en
+        segundo plano. Revisa al abrirla y te enseña todo lo nuevo desde la última vez, así que
+        no se pierde ninguna compra — simplemente no aparece en el segundo exacto en que pagas.</li>
+    </ul>
+
+    <div class="aviso ojo">
+      <b>Lo único que no debes compartir</b>
+      <p>
+        El archivo de copia de seguridad (Ajustes → Descargar copia) lleva dentro todos tus
+        gastos y también tu Client ID. La app se puede compartir con quien quieras; ese archivo, no.
+      </p>
+    </div>
+
+    <p class="nota">
+      El Client ID, por cierto, no es una contraseña: así se identifican todas las aplicaciones
+      web ante Google. Lo que protege tu cuenta es que Google solo lo acepta desde la dirección
+      que autorizaste en el paso 5.
+    </p>
+  </section>
+
+  <footer class="pie">
+    <p>
+      La app funciona igual sin esto: si no conectas Gmail, los gastos se apuntan a mano y todo
+      lo demás es idéntico.
+    </p>
+    <p><a href="./">Volver a Control de Gastos</a></p>
+  </footer>
+
+</div>
+
+</body>
+</html>
