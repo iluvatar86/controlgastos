@@ -136,7 +136,7 @@
       const lista = p.fijos;
       p.fijos = {};
       const clave = claveDeCiclo(p, cicloDe(p, D.hoy()));
-      if (clave && lista.length) p.fijos[clave] = limpiarFijos(lista);
+      if (clave && lista.length) p.fijos[clave] = limpiarFijos(lista, p.moneda);
     });
 
     /* Los remitentes pasaron de ser direcciones enteras a dominios, porque el
@@ -301,7 +301,7 @@
       cortes: [1, 16],          // solo se usa con periodo 'personalizado'
       limites: {},              // { claveDeCategoria: tope por periodo }
       montos: {},               // { inicioDelPeriodo: importe propio de ESE periodo }
-      fijos: {},                // { inicioDelPeriodo: [{id, nombre, monto}] }
+      fijos: {},                // { inicioDelPeriodo: [{id, nombre, monto, moneda, tipoCambio}] }
       moneda: d.ajustes.monedaPorDefecto,
       color: COLORES_PRESUPUESTO[usados % COLORES_PRESUPUESTO.length],
       emoji: '💰',
@@ -365,8 +365,16 @@
      los ve siquiera**, sin tener que acordarse de filtrarlos en cada sitio.
 
      Dónde SÍ viven: en el periodo. `presupuesto.fijos` es un objeto
-     `{inicioDelPeriodo: [{id, nombre, monto}]}`, con la misma clave que los
-     importes propios de un periodo (ver más abajo `claveDeCiclo`).
+     `{inicioDelPeriodo: [{id, nombre, monto, moneda, tipoCambio}]}`, con la
+     misma clave que los importes propios de un periodo (ver más abajo
+     `claveDeCiclo`).
+
+     **Cada uno lleva su moneda**, igual que las compras: hay recibos que se
+     cobran en dólares (una suscripción, un seguro) dentro de un presupuesto en
+     colones. Se guarda el importe tal cual se paga y el tipo de cambio del día,
+     que se estampa y no se vuelve a mover; convertir al apuntarlo y guardar
+     sólo el resultado perdería el dato de verdad —lo que cobran— y dejaría el
+     recibo bailando cada vez que se toca el tipo en Ajustes.
 
      **Son de cada periodo, no del presupuesto**, y esto se hizo mal la primera
      vez: estaban en el presupuesto y valían para todas las quincenas a la vez.
@@ -385,23 +393,39 @@
      exactamente el trabajo que esta pantalla existe para ahorrar.
   --------------------------------------------------------------------------- */
 
-  function limpiarFijos(lista) {
+  /* `monedaPre` es la del presupuesto, y sólo se usa de red: los gastos fijos
+     de antes de que hubiera monedas no la llevan, y todos aquellos se
+     escribieron en la del presupuesto. */
+  function limpiarFijos(lista, monedaPre) {
+    const base = monedaPre === 'USD' ? 'USD' : 'CRC';
     return (Array.isArray(lista) ? lista : []).map((f) => ({
       id: (f && f.id) || uid('fijo'),
       nombre: String((f && f.nombre) || '').trim() || 'Gasto fijo',
-      monto: Number(f && f.monto) || 0
+      monto: Number(f && f.monto) || 0,
+      moneda: (f && (f.moneda === 'USD' || f.moneda === 'CRC')) ? f.moneda : base,
+      // Sin estampar todavía va a 0, y entonces `convertir` usa el de hoy.
+      tipoCambio: Number(f && f.tipoCambio) || 0
     })).filter((f) => f.monto > 0);
   }
 
   function fijosDe(pre, ciclo) {
     const clave = claveDeCiclo(pre, ciclo);
     if (!pre || !clave) return [];
-    return limpiarFijos((pre.fijos || {})[clave]);
+    return limpiarFijos((pre.fijos || {})[clave], pre.moneda);
+  }
+
+  /* Lo que este gasto fijo le quita al presupuesto, en la moneda del
+     presupuesto. Igual que con las compras, manda el tipo de cambio que se
+     estampó al apuntarlo, no el de hoy. */
+  function montoFijoEn(fijo, moneda) {
+    if (!fijo) return 0;
+    return convertir(fijo.monto, fijo.moneda || moneda, moneda, fijo.tipoCambio);
   }
 
   function totalFijos(pre, ciclo) {
     if (!pre) return 0;
-    return D.redondear(fijosDe(pre, ciclo).reduce((s, f) => s + f.monto, 0), pre.moneda);
+    const suma = fijosDe(pre, ciclo).reduce((s, f) => s + montoFijoEn(f, pre.moneda), 0);
+    return D.redondear(suma, pre.moneda);
   }
 
   function setFijos(presupuestoId, ciclo, lista) {
@@ -409,7 +433,11 @@
     const clave = claveDeCiclo(pre, ciclo);
     if (!pre || !clave) return null;
     if (!pre.fijos || Array.isArray(pre.fijos)) pre.fijos = {};
-    const limpia = limpiarFijos(lista);
+    // El tipo de cambio se estampa aquí, que es la única puerta de escritura, y
+    // siempre: haga falta convertir hoy o no, mañana puede hacer falta.
+    const limpia = limpiarFijos(lista, pre.moneda).map((f) => Object.assign({}, f, {
+      tipoCambio: f.tipoCambio || Number(ajustes().tipoCambio) || 1
+    }));
     if (limpia.length) pre.fijos[clave] = limpia;
     else delete pre.fijos[clave];
     save();
@@ -434,7 +462,7 @@
   function periodosConFijos(pre) {
     const mapa = (pre && pre.fijos) || {};
     if (Array.isArray(mapa)) return [];
-    return Object.keys(mapa).filter((k) => limpiarFijos(mapa[k]).length).sort();
+    return Object.keys(mapa).filter((k) => limpiarFijos(mapa[k], pre.moneda).length).sort();
   }
 
   function olvidarFijos(presupuestoId) {
@@ -928,16 +956,33 @@
     return pre;
   }
 
-  /* Reparto por categoría dentro de un ciclo, de mayor a menor. */
+  /* Reparto por categoría dentro de un ciclo, de mayor a menor.
+
+     Cada categoría sale dos veces: en la moneda del presupuesto (`total`) y en
+     la de casa (`totalBase`), que es en la que se piensa. En un presupuesto en
+     colones son el mismo número y sobra una; en uno en dólares es justo lo que
+     hace falta para poder preguntar «¿y esto cuánto me costó de verdad?».
+
+     Lo importante es CÓMO se convierte: compra a compra, cada una con el tipo
+     de cambio que se le estampó el día que se pagó. Pasar al final el total de
+     la categoría con el tipo de hoy daría otro número, y el malo: mezclaría
+     compras hechas a precios distintos. */
   function porCategoria(pre, ciclo) {
     const lista = gastosDe(pre.id, ciclo);
+    const base = ajustes().monedaPorDefecto || 'CRC';
     const mapa = {};
+    const enCasa = {};
     lista.forEach((g) => {
       const key = g.categoria || 'otros';
       mapa[key] = (mapa[key] || 0) + montoAsignadoEn(g, pre.id, pre.moneda);
+      enCasa[key] = (enCasa[key] || 0) + montoAsignadoEn(g, pre.id, base);
     });
     return Object.keys(mapa)
-      .map((key) => Object.assign({}, categoria(key), { total: D.redondear(mapa[key], pre.moneda) }))
+      .map((key) => Object.assign({}, categoria(key), {
+        total: D.redondear(mapa[key], pre.moneda),
+        totalBase: D.redondear(enCasa[key], base),
+        monedaBase: base
+      }))
       .sort((a, b) => b.total - a.total);
   }
 
@@ -1111,7 +1156,7 @@
     fechaDeReferencia, cicloDeReferencia,
     cicloDe, cicloActual, cicloVecino, enCiclo, cortesDe,
     montoDeCiclo, tieneMontoPropio, setMontoDeCiclo, periodosConMontoPropio, olvidarMontosPropios,
-    fijosDe, totalFijos, setFijos, fijosDelVecino, periodosConFijos, olvidarFijos,
+    fijosDe, totalFijos, montoFijoEn, setFijos, fijosDelVecino, periodosConFijos, olvidarFijos,
     gastos, gasto, gastosDe, addGasto, updateGasto, deleteGasto, montoEnMonedaDe,
     asignaciones, presupuestosDe, primerPresupuesto, estaEn, montoAsignadoEn, convertir,
     gmail, setGmail, remitentes, pendientes, pendiente, addPendiente, cerrarPendiente,

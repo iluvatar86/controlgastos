@@ -5,7 +5,7 @@
    los teléfonos seguirán abriendo la copia guardada de la versión anterior.
 --------------------------------------------------------------------------- */
 
-const VERSION = 'controlgastos-v23';
+const VERSION = 'controlgastos-v24';
 
 const FILES = [
   './',

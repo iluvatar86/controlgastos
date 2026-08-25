@@ -528,7 +528,20 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 }
 
 .fijo-nombre { flex: 1; min-width: 0; font-size: .9375rem; }
-.fijo-monto { font-variant-numeric: tabular-nums; font-weight: 650; color: var(--muted); }
+
+.fijo-monto {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+/* Lo que le quita al presupuesto, debajo de lo que cobran de verdad: es el
+   número que cuadra con el total, pero no es el importe del recibo. */
+.fijo-convertido { font-size: .75rem; font-weight: 500; opacity: .75; }
 
 .fijo-total {
   display: flex;
@@ -558,7 +571,11 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
   border-radius: var(--radius-sm);
 }
 
-.fijo-edit-monto { grid-column: 1 / -1; }
+/* La moneda y el importe comparten la segunda línea. Los dos botones ₡/$ van
+   estrechos y fijos; lo que se estira es el campo del número. */
+.fijo-edit-fila { grid-column: 1 / -1; display: flex; gap: 8px; align-items: stretch; }
+.fijo-edit-fila .seg { grid-template-columns: repeat(2, 1fr); flex: none; width: 92px; }
+.fijo-edit-monto { flex: 1; min-width: 0; }
 
 /* Con el nombre de la fila delante a propósito: `.corte-quitar` se declara más
    abajo y, a igualdad de peso, ganaría ella y la × se iría a flotar. */
@@ -682,7 +699,11 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 .cat-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .cat-emoji { flex: none; font-size: 1rem; }
 .cat-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cat-total { font-variant-numeric: tabular-nums; font-weight: 600; }
+/* Con dos monedas la fila crece a dos líneas, así que deja de ir centrada por
+   el medio: los nombres se alinean con el número de arriba, que es el grande. */
+.cat-total { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.cat-otra { font-size: .6875rem; font-weight: 500; color: var(--muted); }
+.cat-row.is-doble { align-items: flex-start; }
 .cat-pct { color: var(--muted); font-size: .75rem; width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
 
 .cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 7px; }
