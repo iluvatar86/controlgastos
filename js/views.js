@@ -1546,14 +1546,76 @@
       oninput: (e) => { b.monto = e.target.value; actualizarConversion(); }
     });
 
-    const comercios = Array.from(new Set(Store.gastos().map((g) => g.comercio).filter(Boolean))).sort();
-    const listaId = 'comercios-conocidos';
+    /* ---------- los comercios de siempre --------------------------------------
+
+       Esto era un `<datalist>`, que es el desplegable que trae el navegador de
+       fábrica. En el móvil resultó inservible: Android lo pinta como una lista
+       a pantalla completa que **tapa el teclado**. Se veían todos los
+       comercios, sí, pero ya no se podía escribir — justo cuando el comercio
+       que hace falta teclear es el que NO está en la lista.
+
+       Ahora la lista la pintamos nosotros, debajo del campo y con tope de seis:
+       cabe en la pantalla, deja el teclado a la vista y se va afinando según se
+       escribe. Con el campo vacío salen los seis que más se repiten, que es
+       casi siempre lo que se busca.
+
+       Se repinta a mano, sin `App.render()`: rehacer la pantalla en mitad de
+       una palabra deja el campo sin foco y en el móvil cierra el teclado. Es la
+       misma razón por la que el total de los gastos fijos se pinta aparte. */
+    const TOPE_SUGERENCIAS = 6;
+
+    // Por veces usado, no por orden alfabético: lo que se repite es lo que se
+    // va a volver a comprar.
+    const usos = {};
+    Store.gastos().forEach((g) => {
+      if (g.comercio) usos[g.comercio] = (usos[g.comercio] || 0) + 1;
+    });
+    const comercios = Object.keys(usos)
+      .sort((uno, otro) => (usos[otro] - usos[uno]) || uno.localeCompare(otro));
+
+    // Sin tildes y en minúsculas, para que «Cafetería» aparezca escribiendo
+    // «cafeteria». El rango es el de los acentos sueltos que deja `NFD`.
+    const sinTildes = (s) =>
+      String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+    const sugerencias = el('div.sugerencias');
+    sugerencias.hidden = true;
 
     const inComercio = el('input', {
       type: 'text', value: b.comercio, placeholder: 'Automercado, Soda La Casona…',
-      list: listaId,
-      oninput: (e) => { b.comercio = e.target.value; }
+      autocomplete: 'off',
+      oninput: (e) => { b.comercio = e.target.value; pintarSugerencias(); },
+      onfocus: () => pintarSugerencias(),
+      // Si se tapa con un clic fuera, la lista sobra. Al elegir una no salta:
+      // el `preventDefault` de abajo impide que el campo pierda el foco.
+      onblur: () => { sugerencias.hidden = true; }
     });
+
+    function pintarSugerencias() {
+      const escrito = sinTildes(inComercio.value);
+      const utiles = comercios
+        .filter((c) => !escrito || sinTildes(c).indexOf(escrito) >= 0)
+        // Uno ya escrito entero no es una sugerencia, es lo que hay.
+        .filter((c) => sinTildes(c) !== escrito)
+        .slice(0, TOPE_SUGERENCIAS);
+
+      sugerencias.innerHTML = '';
+      if (!utiles.length) { sugerencias.hidden = true; return; }
+
+      utiles.forEach((c) => {
+        const fila = el('button.sugerencia', { type: 'button', text: c });
+        fila.addEventListener('mousedown', (ev) => {
+          // Sin esto el campo pierde el foco antes de que llegue el toque, y en
+          // el móvil se cierra el teclado justo cuando aún se puede corregir.
+          ev.preventDefault();
+          inComercio.value = c;
+          b.comercio = c;
+          pintarSugerencias();
+        });
+        sugerencias.appendChild(fila);
+      });
+      sugerencias.hidden = false;
+    }
 
     const inNota = el('input.note-input', {
       type: 'text', value: b.nota, placeholder: 'Opcional',
@@ -1729,7 +1791,7 @@
 
       el('section.card', [
         campo('Comercio', inComercio),
-        el('datalist', { id: listaId }, comercios.map((c) => el('option', { value: c }))),
+        sugerencias,
         campo('Fecha', inFecha),
         avisoDeFechaFuera(b, elegidos),
         b.fecha !== D.hoy() ? el('p.date-warning', [

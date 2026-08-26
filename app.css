@@ -257,6 +257,30 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 }
 .conversion[hidden] { display: none; }
 
+/* ---------- comercios de siempre ------------------------------------------
+
+   Sustituye al desplegable del navegador, que en Android tapaba el teclado.
+   Con tope de seis filas cabe debajo del campo sin empujar nada fuera de la
+   pantalla. Ojo con `[hidden]`: contra un `display: flex` no hace nada por sí
+   solo, hay que apagarlo a mano. */
+
+.sugerencias { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.sugerencias[hidden] { display: none; }
+
+.sugerencia {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: .875rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sugerencia:active { background: var(--line); }
+
 .date-warning {
   margin: 0;
   padding: 10px 12px;
