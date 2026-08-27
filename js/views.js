@@ -63,27 +63,46 @@
   /* Barra de consumo. Verde mientras haya margen, ámbar cuando queda poco y
      rojo cuando se llegó al tope o se pasó. El umbral del ámbar vive en
      Store.AVISO para que todas las barras de la app cambien a la vez. */
-  function barra(consumido, excedido, consumidoFijos) {
+  function barra(consumido, excedido, consumidoNoCompras) {
     const ancho = Math.min(100, Math.max(0, consumido));
-    // El tramo de los gastos fijos va apagado y primero: no es una decisión de
-    // este periodo, es dinero que ya estaba comprometido antes de empezar.
-    const fijos = Math.min(ancho, Math.max(0, consumidoFijos || 0));
+    // El tramo de lo comprometido —fijos y otros gastos juntos— va apagado y
+    // primero: no es una decisión de hoy, es dinero que ya estaba apartado
+    // antes de salir a comprar. Los dos van en el mismo tramo porque para esta
+    // barra significan lo mismo: dinero que no está para gastar.
+    const apartado = Math.min(ancho, Math.max(0, consumidoNoCompras || 0));
     const estado = excedido ? ' is-over' : (consumido >= Store.AVISO ? ' is-warn' : '');
     return el('div.bar', { class: 'bar' + estado }, [
-      fijos > 0 ? el('div.bar-fijos', { style: { width: fijos + '%' } }) : null,
-      el('div.bar-fill', { class: 'bar-fill' + estado, style: { width: (ancho - fijos) + '%' } })
+      apartado > 0 ? el('div.bar-fijos', { style: { width: apartado + '%' } }) : null,
+      el('div.bar-fill', { class: 'bar-fill' + estado, style: { width: (ancho - apartado) + '%' } })
     ]);
   }
 
-  /* La barra de un presupuesto, con su tramo de fijos si los tiene. Se usa en
-     todas las tarjetas para que la misma barra signifique lo mismo en toda la
-     app. */
+  /* La barra de un presupuesto, con su tramo de comprometido si lo tiene. Se
+     usa en todas las tarjetas para que la misma barra signifique lo mismo en
+     toda la app. */
   function barraDeResumen(r) {
-    return barra(r.consumido, r.excedido, r.consumidoFijos);
+    return barra(r.consumido, r.excedido, r.consumidoNoCompras);
   }
 
   function barraDeEstado(consumido, estado) {
     return barra(consumido, estado === 'pasado');
+  }
+
+  /* El pie de la tarjeta de un presupuesto: «₡120.000 en compras · ₡80.000
+     comprometido». Vive aquí y no en cada pantalla porque lo usan la lista de
+     presupuestos y el Resumen, y dos textos distintos para lo mismo se leen
+     como dos cosas distintas.
+
+     Con una sola caja se dice cuál es —«en fijos» informa más que «comprometido»—
+     y con las dos se junta, o la línea no cabe en un móvil. */
+  function pieDeTarjeta(r, pre) {
+    if (!r.noCompras) {
+      return D.dinero(r.gastado, pre.moneda) + ' de ' + D.dinero(r.asignado, pre.moneda);
+    }
+    const etiqueta = (r.fijos && r.otros) ? ' comprometido'
+      : (r.fijos ? ' en fijos' : ' en otros gastos');
+    return D.dinero(r.gastado, pre.moneda) + ' en compras · ' +
+      D.dinero(r.noCompras, pre.moneda) + etiqueta;
   }
 
   /* Chapa para la tarjeta de la lista: que un tope pasado se vea sin entrar en
@@ -206,12 +225,7 @@
         ]),
         barraDeResumen(r),
         el('div.pre-foot', [
-          el('span', {
-            text: r.fijos
-              ? D.dinero(r.gastado, pre.moneda) + ' en compras · ' +
-                D.dinero(r.fijos, pre.moneda) + ' en fijos'
-              : D.dinero(r.gastado, pre.moneda) + ' de ' + D.dinero(r.asignado, pre.moneda)
-          }),
+          el('span', { text: pieDeTarjeta(r, pre) }),
           el('span', { text: r.consumido + ' %' })
         ]),
         cerrado ? el('span.chapa-cerrado', { text: motivoDelCierre(pre) }) : chapaDeTopes(pre, r.ciclo)
@@ -305,22 +319,11 @@
           // secas, es lo que queda PARA COMPRAR. Decirlo evita la pregunta.
           el('span.balance-l', {
             text: r.excedido ? 'gastado de más'
-              : (r.fijos ? 'te queda para compras' : 'te queda disponible')
+              : (r.noCompras ? 'te queda para compras' : 'te queda disponible')
           })
         ]),
         barraDeResumen(r),
-        el('div.balance-grid', {
-          class: 'balance-grid' + (r.fijos ? ' is-cuatro' : '')
-        }, r.fijos ? [
-          dato('Presupuesto', D.dinero(r.asignado, pre.moneda), r.asignadoPropio),
-          dato('Gastos fijos', D.dinero(r.fijos, pre.moneda)),
-          dato('Compras', D.dinero(r.gastado, pre.moneda)),
-          dato('Consumido', r.consumido + ' %')
-        ] : [
-          dato('Presupuesto', D.dinero(r.asignado, pre.moneda), r.asignadoPropio),
-          dato('Gastado', D.dinero(r.gastado, pre.moneda)),
-          dato('Consumido', r.consumido + ' %')
-        ]),
+        baldosasDelBalance(pre, r),
         montoDelPeriodo(pre, ciclo, r),
         r.diasRestantes !== null && esActual ? ritmo(r, pre) : null,
         el('a.btn.btn-primary.btn-block', {
@@ -328,7 +331,8 @@
         })
       ]),
 
-      tarjetaDeFijos(pre, ciclo, r),
+      tarjetaDeApuntes(pre, ciclo, r, 'fijos'),
+      tarjetaDeApuntes(pre, ciclo, r, 'otros'),
 
       tarjetaDeLimites(pre, ciclo),
 
@@ -337,7 +341,7 @@
           el('h2.card-title', { text: 'Cómo va el gasto' }),
           el('p.muted', {
             text: 'La línea de puntos es el ritmo que agota el presupuesto justo el último día.' +
-              (r.fijos ? ' Aquí solo entran las compras: los gastos fijos ya están descontados.' : '')
+              (r.noCompras ? ' Aquí solo entran las compras: lo comprometido ya está descontado.' : '')
           })
         ]),
         Charts.acumulado({
@@ -442,44 +446,90 @@
      consumiendo», está pagado y punto.
   --------------------------------------------------------------------------- */
 
-  // Igual que con el importe del periodo: la clave lleva el periodo dentro,
-  // así que al cambiar de quincena el editor se cierra solo en vez de quedarse
-  // abierto con la lista de la otra.
-  let fijosAbierto = null;
-  let fijosBorrador = [];
-  let fijosCambio = '';
+  /* Las dos cajas comparten toda la maquinaria y se diferencian sólo en las
+     palabras y en si dejan copiar del periodo de al lado.
+
+     Copiar sólo tiene sentido en los fijos: el alquiler es el mismo cada
+     quincena. Un imprevisto, por definición, no se repite — ofrecer «copiar los
+     del periodo anterior» ahí sería invitar a apuntar dos veces algo que pasó
+     una sola. */
+  const CAJAS = {
+    fijos: {
+      clave: 'fijos',
+      titulo: 'Gastos fijos del periodo',
+      tituloEditor: 'Gastos fijos de ',
+      anadir: '+ Añadir un gasto fijo',
+      nombreFila: 'Nombre del gasto fijo',
+      importeFila: 'Importe del gasto fijo',
+      quitarFila: 'Quitar este gasto fijo',
+      ejemplos: 'Alquiler, escuela, internet…',
+      ayudaRecurrente: 'Estos son solo de este periodo. Los demás periodos no cambian.',
+      ayudaPuntual: 'Lo que hay que pagar sí o sí dentro de este presupuesto y no es una compra.',
+      ayudaCambio: 'Se guarda con estos gastos fijos: si mañana cambias el tipo en Ajustes, ' +
+        'estos no se mueven.',
+      alPasarse: 'Los gastos fijos suman ',
+      copiaDelVecino: true
+    },
+    otros: {
+      clave: 'otros',
+      titulo: 'Otros gastos del periodo',
+      tituloEditor: 'Otros gastos de ',
+      anadir: '+ Añadir otro gasto',
+      nombreFila: 'Nombre del gasto',
+      importeFila: 'Importe del gasto',
+      quitarFila: 'Quitar este gasto',
+      ejemplos: 'Reparación del carro, médico…',
+      ayudaRecurrente: 'Los imprevistos de este periodo: no son compras y no se repiten. ' +
+        'Los demás periodos no cambian.',
+      ayudaPuntual: 'Los imprevistos de este presupuesto: no son compras.',
+      ayudaCambio: 'Se guarda con estos gastos: si mañana cambias el tipo en Ajustes, ' +
+        'estos no se mueven.',
+      alPasarse: 'Los otros gastos suman ',
+      copiaDelVecino: false
+    }
+  };
+
+  // Igual que con el importe del periodo: la clave lleva el periodo Y la caja
+  // dentro, así que al cambiar de quincena —o al abrir la otra caja— el editor
+  // se cierra solo en vez de quedarse abierto con la lista que no es.
+  let apuntesAbierto = null;
+  let apuntesBorrador = [];
+  let apuntesCambio = '';
 
   /* Con qué tipo de cambio se abre el editor. Si los que ya están apuntados
      traen uno estampado, ése: se guardaron a ese precio y volver a abrirlos
      para cambiar un nombre no puede recalcularlos por detrás. Sólo cuando no
      hay ninguno se usa el de hoy. */
-  function cambioDeFijos(lista, pre) {
+  function cambioDeApuntes(lista, pre) {
     const conCambio = (lista || []).find((f) =>
       f.tipoCambio > 0 && (f.moneda || pre.moneda) !== pre.moneda);
     return String(conCambio ? conCambio.tipoCambio : Store.ajustes().tipoCambio);
   }
 
-  function tarjetaDeFijos(pre, ciclo, r) {
-    const clave = pre.id + '|' + ((ciclo && ciclo.inicio) || 'unico');
-    if (fijosAbierto === clave) return fijosEditor(pre, ciclo, r, clave);
+  function tarjetaDeApuntes(pre, ciclo, r, caja) {
+    const caso = CAJAS[caja];
+    const total = caja === 'otros' ? r.otros : r.fijos;
+    const guardados = caja === 'otros' ? r.listaOtros : r.listaFijos;
+    const clave = pre.id + '|' + ((ciclo && ciclo.inicio) || 'unico') + '|' + caja;
+    if (apuntesAbierto === clave) return apuntesEditor(pre, ciclo, r, clave, caja);
 
-    const vecino = Store.fijosDelVecino(pre, ciclo);
+    const vecino = caso.copiaDelVecino ? Store.apuntesDelVecino(pre, ciclo, caja) : null;
     const abrir = (lista, cambio) => {
-      fijosAbierto = clave;
-      fijosBorrador = lista.map((f) => ({
+      apuntesAbierto = clave;
+      apuntesBorrador = lista.map((f) => ({
         id: f.id, nombre: f.nombre, monto: String(f.monto), moneda: f.moneda || pre.moneda
       }));
-      fijosCambio = cambio || cambioDeFijos(lista, pre);
+      apuntesCambio = cambio || cambioDeApuntes(lista, pre);
       App.render();
     };
-    const enBlanco = () => ({ id: Store.uid('fijo'), nombre: '', monto: '', moneda: pre.moneda });
+    const enBlanco = () => ({ id: Store.uid('apunte'), nombre: '', monto: '', moneda: pre.moneda });
 
-    if (!r.fijos) {
+    if (!total) {
       return el('section.card.fijos-vacio', [
-        el('h2.card-title', { text: 'Gastos fijos del periodo' }),
+        el('h2.card-title', { text: caso.titulo }),
         el('div.fijo-acciones', [
           el('button.link-boton', {
-            type: 'button', text: '+ Añadir un gasto fijo',
+            type: 'button', text: caso.anadir,
             onclick: () => abrir([enBlanco()])
           }),
           vecino ? el('button.link-boton.link-copiar', {
@@ -488,7 +538,7 @@
             // Copiados se llevan la moneda, pero no el tipo de cambio: son
             // recibos de OTRO periodo, y este se paga al precio de ahora.
             onclick: () => abrir(vecino.lista.map((f) => ({
-              id: Store.uid('fijo'), nombre: f.nombre, monto: f.monto, moneda: f.moneda
+              id: Store.uid('apunte'), nombre: f.nombre, monto: f.monto, moneda: f.moneda
             })), String(Store.ajustes().tipoCambio))
           }) : null
         ])
@@ -497,13 +547,13 @@
 
     return el('section.card', [
       el('div.card-head', [
-        el('h2.card-title', { text: 'Gastos fijos del periodo' }),
+        el('h2.card-title', { text: caso.titulo }),
         el('button.link-soft.link-boton', {
           type: 'button', text: 'Cambiar',
-          onclick: () => abrir(r.listaFijos)
+          onclick: () => abrir(guardados)
         })
       ]),
-      el('ul.fijos', r.listaFijos.map((f) => {
+      el('ul.fijos', guardados.map((f) => {
         const otra = (f.moneda || pre.moneda) !== pre.moneda;
         return el('li.fijo', [
           el('span.fijo-nombre', { text: f.nombre }),
@@ -513,16 +563,35 @@
           el('span.fijo-monto', [
             el('span', { text: D.dinero(f.monto, f.moneda || pre.moneda) }),
             otra ? el('span.fijo-convertido', {
-              text: D.dinero(Store.montoFijoEn(f, pre.moneda), pre.moneda)
+              text: D.dinero(Store.montoApuntadoEn(f, pre.moneda), pre.moneda)
             }) : null
           ])
         ]);
       })),
       el('div.fijo-total', [
         el('span', { text: 'Total comprometido' }),
-        el('span', { text: D.dinero(r.fijos, pre.moneda) })
+        el('span', { text: D.dinero(total, pre.moneda) })
       ])
     ]);
+  }
+
+  /* Las baldosas de debajo del saldo. Crecen según lo que haya que contar, y
+     no al revés: enseñar «Gastos fijos ₡0» en un presupuesto que no tiene
+     ninguno es ocupar sitio para decir que no hay nada.
+
+     Con las dos cajas llenas son cinco números. En dos columnas la quinta se
+     quedaría sola en su fila, así que ocupa el ancho entero: el porcentaje es
+     el que mejor aguanta ir en grande, porque es el resumen de los otros
+     cuatro. */
+  function baldosasDelBalance(pre, r) {
+    const fijas = [dato('Presupuesto', D.dinero(r.asignado, pre.moneda), r.asignadoPropio)];
+    if (r.fijos) fijas.push(dato('Gastos fijos', D.dinero(r.fijos, pre.moneda)));
+    if (r.otros) fijas.push(dato('Otros gastos', D.dinero(r.otros, pre.moneda)));
+    fijas.push(dato(r.noCompras ? 'Compras' : 'Gastado', D.dinero(r.gastado, pre.moneda)));
+    fijas.push(dato('Consumido', r.consumido + ' %'));
+
+    const forma = fijas.length === 5 ? ' is-cinco' : (fijas.length === 4 ? ' is-cuatro' : '');
+    return el('div.balance-grid', { class: 'balance-grid' + forma }, fijas);
   }
 
   function etiquetaDelPeriodo(pre, ciclo) {
@@ -534,65 +603,76 @@
      dibujarlo todo en mitad de una palabra deja el campo sin foco y en el
      móvil cierra el teclado. Lo mismo que hace el reparto de un gasto entre
      varios presupuestos. */
-  function fijosEditor(pre, ciclo, r, clave) {
-    const lista = fijosBorrador;
-    const resumenFijos = el('p.hint');
-    const cerrar = () => { fijosAbierto = null; fijosBorrador = []; fijosCambio = ''; App.render(); };
+  function apuntesEditor(pre, ciclo, r, clave, caja) {
+    const caso = CAJAS[caja];
+    const lista = apuntesBorrador;
+    const resumenApuntes = el('p.hint');
+    const cerrar = () => {
+      apuntesAbierto = null; apuntesBorrador = []; apuntesCambio = ''; App.render();
+    };
     const refrescar = () => App.render();
+
+    /* Lo que ya hay comprometido en la OTRA caja. Sin esto, cada editor
+       compararía su suma contra el presupuesto entero y los dos dirían que
+       caben, cuando juntos no caben. */
+    const laOtra = caja === 'otros' ? r.fijos : r.otros;
+    const techo = D.redondear(r.asignado - laOtra, pre.moneda);
 
     // Lo que una fila le quita al presupuesto, con el tipo de cambio que hay
     // ahora mismo en el campo. Mientras se escribe no hay nada estampado
     // todavía: eso pasa al guardar.
     const hayOtraMoneda = () => lista.some((f) => f.moneda !== pre.moneda);
-    const tipoAhora = () => D.leerImporte(fijosCambio) || Store.ajustes().tipoCambio;
+    const tipoAhora = () => D.leerImporte(apuntesCambio) || Store.ajustes().tipoCambio;
     const enPresupuesto = (f) =>
       Store.convertir(D.leerImporte(f.monto) || 0, f.moneda, pre.moneda, tipoAhora());
 
-    const inCambioFijos = el('input', {
-      type: 'text', inputmode: 'decimal', value: fijosCambio,
-      oninput: (e) => { fijosCambio = e.target.value; pintarTotal(); }
+    const inCambioApuntes = el('input', {
+      type: 'text', inputmode: 'decimal', value: apuntesCambio,
+      oninput: (e) => { apuntesCambio = e.target.value; pintarTotal(); }
     });
 
     function pintarTotal() {
       const suma = lista.reduce((s, f) => s + enPresupuesto(f), 0);
-      const queda = D.redondear(r.asignado - suma, pre.moneda);
+      const queda = D.redondear(techo - suma, pre.moneda);
       if (!suma) {
-        resumenFijos.className = 'hint';
-        resumenFijos.textContent = 'De momento no suman nada. Las filas sin importe no se guardan.';
+        resumenApuntes.className = 'hint';
+        resumenApuntes.textContent = 'De momento no suman nada. Las filas sin importe no se guardan.';
         return;
       }
+      // Cuando la otra caja ya tiene algo hay que decirlo, o el número contra
+      // el que se compara parece sacado de la nada.
+      const deQue = laOtra
+        ? D.dinero(techo, pre.moneda) + ' que quedaban'
+        : D.dinero(techo, pre.moneda);
       if (queda < 0) {
-        resumenFijos.className = 'hint is-error';
-        resumenFijos.textContent = 'Suman ' + D.dinero(suma, pre.moneda) + ', más que los ' +
-          D.dinero(r.asignado, pre.moneda) + ' del periodo. Se pasa ' +
-          D.dinero(Math.abs(queda), pre.moneda) + ' y no queda nada para comprar.';
+        resumenApuntes.className = 'hint is-error';
+        resumenApuntes.textContent = 'Suman ' + D.dinero(suma, pre.moneda) + ', más que los ' +
+          deQue + ' del periodo. Se pasa ' + D.dinero(Math.abs(queda), pre.moneda) +
+          ' y no queda nada para comprar.';
         return;
       }
-      resumenFijos.className = 'hint';
-      resumenFijos.textContent = 'Suman ' + D.dinero(suma, pre.moneda) + ' de ' +
-        D.dinero(r.asignado, pre.moneda) + ': quedan ' + D.dinero(queda, pre.moneda) +
-        ' para comprar.';
+      resumenApuntes.className = 'hint';
+      resumenApuntes.textContent = 'Suman ' + D.dinero(suma, pre.moneda) + ' de ' + deQue +
+        ': quedan ' + D.dinero(queda, pre.moneda) + ' para comprar.';
     }
 
     pintarTotal();
 
     return el('section.card.fijos-editor', [
-      el('h2.card-title', { text: 'Gastos fijos de ' + etiquetaDelPeriodo(pre, ciclo) }),
+      el('h2.card-title', { text: caso.tituloEditor + etiquetaDelPeriodo(pre, ciclo) }),
       el('p.hint-box', {
-        text: pre.tipo === 'recurrente'
-          ? 'Estos son solo de este periodo. Los demás periodos no cambian.'
-          : 'Lo que hay que pagar sí o sí dentro de este presupuesto y no es una compra.'
+        text: pre.tipo === 'recurrente' ? caso.ayudaRecurrente : caso.ayudaPuntual
       }),
 
       lista.length ? el('div.fijos-edit', lista.map((f) => el('div.fijo-edit', [
         el('input.fijo-edit-nombre', {
-          type: 'text', value: f.nombre, placeholder: 'Alquiler, escuela, internet…',
-          'aria-label': 'Nombre del gasto fijo',
+          type: 'text', value: f.nombre, placeholder: caso.ejemplos,
+          'aria-label': caso.nombreFila,
           oninput: (e) => { f.nombre = e.target.value; }
         }),
         el('button.corte-quitar.fijo-quitar', {
-          type: 'button', text: '×', 'aria-label': 'Quitar este gasto fijo',
-          onclick: () => { fijosBorrador = lista.filter((x) => x !== f); refrescar(); }
+          type: 'button', text: '×', 'aria-label': caso.quitarFila,
+          onclick: () => { apuntesBorrador = lista.filter((x) => x !== f); refrescar(); }
         }),
         /* La moneda va en cada fila, no en la tarjeta entera: dentro de la
            misma quincena conviven el alquiler en colones y la suscripción en
@@ -605,17 +685,17 @@
           ], f.moneda, (v) => { f.moneda = v; refrescar(); }),
           el('input.in-amount-sm.fijo-edit-monto', {
             type: 'text', inputmode: 'decimal', value: f.monto, placeholder: '0',
-            'aria-label': 'Importe del gasto fijo',
+            'aria-label': caso.importeFila,
             oninput: (e) => { f.monto = e.target.value; pintarTotal(); }
           })
         ])
       ]))) : null,
 
       el('button.btn.btn-small', {
-        type: 'button', text: '+ Añadir un gasto fijo',
+        type: 'button', text: caso.anadir,
         onclick: () => {
-          fijosBorrador = lista.concat([
-            { id: Store.uid('fijo'), nombre: '', monto: '', moneda: pre.moneda }
+          apuntesBorrador = lista.concat([
+            { id: Store.uid('apunte'), nombre: '', monto: '', moneda: pre.moneda }
           ]);
           refrescar();
           // El teclado se abre en la fila nueva: si no, hay que buscarla y
@@ -628,12 +708,10 @@
       }),
 
       hayOtraMoneda()
-        ? campo('Tipo de cambio (colones por dólar)', inCambioFijos,
-          'Se guarda con estos gastos fijos: si mañana cambias el tipo en Ajustes, ' +
-          'estos no se mueven.')
+        ? campo('Tipo de cambio (colones por dólar)', inCambioApuntes, caso.ayudaCambio)
         : null,
 
-      resumenFijos,
+      resumenApuntes,
 
       el('div.form-actions', [
         el('button.btn', { type: 'button', text: 'Cancelar', onclick: cerrar }),
@@ -654,14 +732,15 @@
             // La comparación con el presupuesto va en su moneda, o un recibo en
             // dólares parecería ridículamente pequeño al lado de los colones.
             const suma = D.redondear(
-              limpia.reduce((s, f) => s + Store.montoFijoEn(f, pre.moneda), 0), pre.moneda);
+              limpia.reduce((s, f) => s + Store.montoApuntadoEn(f, pre.moneda), 0), pre.moneda);
             // Se puede guardar igual —a veces la cuenta sale así de verdad—,
             // pero callarlo dejaría el periodo empezando en rojo sin explicación.
-            if (suma > r.asignado && !confirm(
-              'Los gastos fijos suman ' + D.dinero(suma, pre.moneda) + ', más que los ' +
-              D.dinero(r.asignado, pre.moneda) + ' de este periodo. Se puede guardar, pero ' +
+            if (suma > techo && !confirm(
+              caso.alPasarse + D.dinero(suma, pre.moneda) + ', más que los ' +
+              D.dinero(techo, pre.moneda) + (laOtra ? ' que quedaban' : '') +
+              ' de este periodo. Se puede guardar, pero ' +
               'no quedará nada para comprar. ¿Sigo?')) return;
-            Store.setFijos(pre.id, ciclo, limpia);
+            Store.setApuntes(pre.id, ciclo, caja, limpia);
             cerrar();
           }
         })
@@ -887,8 +966,11 @@
         el('span.gasto-emoji', { style: { background: cat.color + '22' }, text: cat.emoji }),
         el('div.gasto-main', [
           el('span.gasto-name', { text: g.comercio || cat.nombre }),
+          // La hora delante cuando se sabe: es lo que explica el orden dentro
+          // del día, y sin verla parece que la lista está revuelta.
           el('span.gasto-meta', {
-            text: cat.nombre + (g.nota ? ' · ' + g.nota : '') + (g.origen === 'gmail' ? ' · del correo' : '')
+            text: (g.hora ? g.hora + ' · ' : '') + cat.nombre +
+              (g.nota ? ' · ' + g.nota : '') + (g.origen === 'gmail' ? ' · del correo' : '')
           }),
           compartido ? el('span.chip-compartido', { text: 'En ' + Store.asignaciones(g).length + ' presupuestos' }) : null
         ]),
@@ -917,14 +999,22 @@
     lineas.push('');
     lineas.push('Presupuesto: ' + D.dinero(r.asignado, pre.moneda));
 
-    /* Con gastos fijos hace falta desglosar, o el texto no cuadra: quien lo
-       lea vería un gastado pequeño y un disponible mucho menor de lo que
+    /* Con dinero comprometido hace falta desglosar, o el texto no cuadra: quien
+       lo lea vería un gastado pequeño y un disponible mucho menor de lo que
        tocaría, sin nada que lo explique. */
-    if (r.fijos) {
-      lineas.push('Gastos fijos: ' + D.dinero(r.fijos, pre.moneda));
-      r.listaFijos.forEach((f) => {
-        lineas.push('· ' + f.nombre + ': ' + D.dinero(f.monto, f.moneda || pre.moneda));
-      });
+    if (r.noCompras) {
+      if (r.fijos) {
+        lineas.push('Gastos fijos: ' + D.dinero(r.fijos, pre.moneda));
+        r.listaFijos.forEach((f) => {
+          lineas.push('· ' + f.nombre + ': ' + D.dinero(f.monto, f.moneda || pre.moneda));
+        });
+      }
+      if (r.otros) {
+        lineas.push('Otros gastos: ' + D.dinero(r.otros, pre.moneda));
+        r.listaOtros.forEach((f) => {
+          lineas.push('· ' + f.nombre + ': ' + D.dinero(f.monto, f.moneda || pre.moneda));
+        });
+      }
       lineas.push('Para compras: ' + D.dinero(r.paraCompras, pre.moneda));
       lineas.push('Compras: ' + D.dinero(r.gastado, pre.moneda));
       lineas.push((r.excedido ? 'Pasado de: ' : 'Disponible: ') +
@@ -1364,8 +1454,9 @@
   function avisoDeCalendario(id) {
     const pre = Store.presupuesto(id);
     const montos = Store.periodosConMontoPropio(pre).length;
-    const fijos = Store.periodosConFijos(pre).length;
-    if (!montos && !fijos) return false;
+    const fijos = Store.periodosConApuntes(pre, 'fijos').length;
+    const otros = Store.periodosConApuntes(pre, 'otros').length;
+    if (!montos && !fijos && !otros) return false;
 
     const partes = [];
     if (montos) {
@@ -1375,6 +1466,10 @@
     if (fijos) {
       partes.push(fijos === 1 ? 'un periodo con gastos fijos apuntados'
         : fijos + ' periodos con gastos fijos apuntados');
+    }
+    if (otros) {
+      partes.push(otros === 1 ? 'un periodo con otros gastos apuntados'
+        : otros + ' periodos con otros gastos apuntados');
     }
 
     return confirm(
@@ -1418,7 +1513,11 @@
     if (limpiar === 'cancelado') return;
 
     const guardado = id ? Store.updatePresupuesto(id, datos) : Store.addPresupuesto(datos);
-    if (limpiar) { Store.olvidarMontosPropios(guardado.id); Store.olvidarFijos(guardado.id); }
+    if (limpiar) {
+      Store.olvidarMontosPropios(guardado.id);
+      Store.olvidarApuntes(guardado.id, 'fijos');
+      Store.olvidarApuntes(guardado.id, 'otros');
+    }
     borradorPre = null;
     location.hash = '#/presupuesto/' + guardado.id;
   }
@@ -1952,10 +2051,17 @@
       tipoCambio: D.leerImporte(b.tipoCambio) || Store.ajustes().tipoCambio
     };
 
-    // La hora de creación se calcula a partir de la fecha elegida, no del
-    // momento de escribirlo: de eso depende el orden de la lista cuando se
-    // rellenan gastos de días pasados.
-    if (!id) datos.ts = D.deIso(b.fecha).getTime();
+    /* La hora, sólo cuando se puede saber de verdad.
+
+       Si el gasto es de HOY, es ahora: se apunta la compra al hacerla, y de eso
+       depende que la lista del día salga en orden. Si es de un día pasado, no
+       hay forma de saberlo, así que se deja en blanco y ese gasto se ordena
+       después de los que sí tienen hora, que es la verdad.
+
+       Antes aquí se falseaba `ts` con la fecha elegida a mediodía. Eso dejaba
+       empatados todos los gastos de un mismo día y la lista salía en el orden
+       en que se escribieron. Ya no hace falta: el día lo lleva `fecha`. */
+    if (!id) datos.hora = (b.fecha === D.hoy()) ? D.horaAhora() : '';
 
     const destino = b.presupuestos[0];
     if (id) Store.updateGasto(id, datos); else Store.addGasto(datos);
@@ -2445,7 +2551,8 @@
     hayBorrador, olvidarBorradores, sembrarGasto,
     textoDelEstado, compartirEstado, enlacesDeCompartir,
     helpers: {
-      header, volver, campo, vacio, segmentado, barra, barraDeResumen, barraDeEstado, dato,
+      header, volver, campo, vacio, segmentado, barra, barraDeResumen, barraDeEstado,
+      pieDeTarjeta, dato,
       chipCategoria, chapaDeTopes, listaDeGastos, filaDeGasto
     }
   };

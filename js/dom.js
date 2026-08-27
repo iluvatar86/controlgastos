@@ -77,6 +77,15 @@
     return aIso(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
   }
 
+  /* 'HH:MM' de ahora mismo, en 24 horas. Es el mismo formato en el que
+     `bancos.js` deja la hora que viene en el correo, para que las dos se puedan
+     comparar como texto al ordenar la lista. */
+  function horaAhora() {
+    const now = new Date();
+    return String(now.getHours()).padStart(2, '0') + ':' +
+      String(now.getMinutes()).padStart(2, '0');
+  }
+
   /* 'aaaa-mm-dd' → Date local (mediodía, para que ningún cambio de horario de
      verano lo mueva al día de al lado). */
   function deIso(iso) {
@@ -224,7 +233,7 @@
 
   global.D = {
     el, clear, svg,
-    hoy, deIso, aIso, sumarDias, sumarMeses, ultimoDiaDelMes, diasEntre,
+    hoy, horaAhora, deIso, aIso, sumarDias, sumarMeses, ultimoDiaDelMes, diasEntre,
     fecha, fechaCorta, fechaMedia, fechaLarga, nombreMes,
     dinero, dineroCorto, leerImporte, redondear, porcentaje, SIMBOLO
   };

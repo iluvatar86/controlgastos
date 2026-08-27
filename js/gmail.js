@@ -692,8 +692,11 @@
       comercio: (cambios.comercio || '').trim(),
       nota: p.banco + (p.tarjeta ? ' ****' + p.tarjeta : ''),
       fecha: p.fecha,
-      origen: 'gmail',
-      ts: D.deIso(p.fecha).getTime()
+      // La hora venía leída del correo desde el principio y se enseñaba en esta
+      // misma bandeja, pero se perdía justo aquí, al apuntar el gasto. Es la
+      // buena de verdad: la del banco, no la de cuando se revisó el correo.
+      hora: p.hora || '',
+      origen: 'gmail'
     });
 
     // Se recuerda el presupuesto elegido: lo normal es que el siguiente vaya

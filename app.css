@@ -535,9 +535,15 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 
 .balance-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 
-/* Con gastos fijos hay cuatro datos. En tres columnas no cabrían los importes
-   sin partirse, así que se pasa a dos por dos. */
+/* Con dinero comprometido hay cuatro datos. En tres columnas no cabrían los
+   importes sin partirse, así que se pasa a dos por dos. */
 .balance-grid.is-cuatro { grid-template-columns: repeat(2, 1fr); }
+
+/* Con las dos cajas —fijos y otros gastos— son cinco. La quinta se quedaría
+   sola en su fila, así que ocupa el ancho entero. Va el porcentaje, que es el
+   que mejor aguanta ir en grande porque resume a los otros cuatro. */
+.balance-grid.is-cinco { grid-template-columns: repeat(2, 1fr); }
+.balance-grid.is-cinco > :last-child { grid-column: 1 / -1; }
 
 /* ---------- gastos fijos --------------------------------------------------- */
 

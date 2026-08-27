@@ -177,10 +177,7 @@
           el('span', {
             text: r.diasRestantes !== null && r.diasRestantes > 0 && r.porDia
               ? D.dinero(r.porDia, pre.moneda) + ' al día durante ' + r.diasRestantes + ' días'
-              : (r.fijos
-                ? D.dinero(r.gastado, pre.moneda) + ' en compras · ' +
-                  D.dinero(r.fijos, pre.moneda) + ' en fijos'
-                : D.dinero(r.gastado, pre.moneda) + ' de ' + D.dinero(r.asignado, pre.moneda))
+              : Views.helpers.pieDeTarjeta(r, pre)
           }),
           el('span', { text: r.consumido + ' %' })
         ]),
@@ -192,7 +189,9 @@
   function ultimosGastos() {
     const lista = gastosActivos()
       .slice()
-      .sort((a, b) => (b.fecha === a.fecha ? (b.ts || 0) - (a.ts || 0) : b.fecha.localeCompare(a.fecha)))
+      // El mismo orden que dentro del presupuesto, y desde el mismo sitio: dos
+      // listas de lo mismo ordenadas distinto se leen como un fallo.
+      .sort(Store.porFechaYHora)
       .slice(0, 12);
 
     if (!lista.length) return null;

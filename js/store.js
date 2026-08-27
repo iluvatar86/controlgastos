@@ -131,12 +131,15 @@
        que son un objeto `{inicioDelPeriodo: lista}`. Lo que hubiera en la forma
        antigua se pasa al periodo en curso, que es donde se estaba mirando. */
     (d.presupuestos || []).forEach((p) => {
+      // La caja de otros gastos es posterior: los presupuestos de antes no la
+      // traen y hay que dejarla vacía, no sin existir.
+      if (!p.otros || Array.isArray(p.otros)) p.otros = {};
       if (!p.fijos) { p.fijos = {}; return; }
       if (!Array.isArray(p.fijos)) return;
       const lista = p.fijos;
       p.fijos = {};
       const clave = claveDeCiclo(p, cicloDe(p, D.hoy()));
-      if (clave && lista.length) p.fijos[clave] = limpiarFijos(lista, p.moneda);
+      if (clave && lista.length) p.fijos[clave] = limpiarApuntes(lista, p.moneda, 'fijos');
     });
 
     /* Los remitentes pasaron de ser direcciones enteras a dominios, porque el
@@ -302,6 +305,7 @@
       limites: {},              // { claveDeCategoria: tope por periodo }
       montos: {},               // { inicioDelPeriodo: importe propio de ESE periodo }
       fijos: {},                // { inicioDelPeriodo: [{id, nombre, monto, moneda, tipoCambio}] }
+      otros: {},                // igual que fijos, pero para los imprevistos
       moneda: d.ajustes.monedaPorDefecto,
       color: COLORES_PRESUPUESTO[usados % COLORES_PRESUPUESTO.length],
       emoji: '💰',
@@ -312,6 +316,7 @@
     }, borrador);
     item.monto = Number(item.monto) || 0;
     if (!item.fijos || Array.isArray(item.fijos)) item.fijos = {};
+    if (!item.otros || Array.isArray(item.otros)) item.otros = {};
     d.presupuestos.push(item);
     save();
     return item;
@@ -351,10 +356,20 @@
     return { solos, compartidos };
   }
 
-  /* ---------- gastos fijos, DE CADA PERIODO ---------------------------------
+  /* ---------- lo que NO son compras, DE CADA PERIODO -------------------------
 
-     El alquiler, la escuela, el préstamo, el internet. Tienen dos cosas en
-     común: **no son compras** y el importe se sabe de antemano.
+     Hay dos cajas, y las dos funcionan exactamente igual por dentro:
+
+     - **`fijos`** — el alquiler, la escuela, el préstamo, el internet. Se
+       repiten y el importe se sabe de antemano.
+     - **`otros`** — el imprevisto. La reparación del carro, el médico, la
+       multa. **No se repiten**, y por eso no tienen el botón de copiar del
+       periodo de al lado: copiar un imprevisto no significa nada.
+
+     Esa es la única diferencia entre las dos, y vive en la pantalla, no aquí.
+     Aquí abajo todo lleva un parámetro `caja` que dice en cuál se guarda.
+
+     Lo que comparten es lo importante: **no son compras** y el importe se sabe.
 
      Dónde NO viven: en `gastos`. Meterlos ahí ensucia justo lo que sirve para
      decidir —el gráfico del día a día se convierte en un pico gigante el día
@@ -364,9 +379,9 @@
      categorías, topes, baldosas, «últimos gastos», lo que trae el correo) **no
      los ve siquiera**, sin tener que acordarse de filtrarlos en cada sitio.
 
-     Dónde SÍ viven: en el periodo. `presupuesto.fijos` es un objeto
-     `{inicioDelPeriodo: [{id, nombre, monto, moneda, tipoCambio}]}`, con la
-     misma clave que los importes propios de un periodo (ver más abajo
+     Dónde SÍ viven: en el periodo. `presupuesto.fijos` y `presupuesto.otros`
+     son objetos `{inicioDelPeriodo: [{id, nombre, monto, moneda, tipoCambio}]}`,
+     con la misma clave que los importes propios de un periodo (ver más abajo
      `claveDeCiclo`).
 
      **Cada uno lleva su moneda**, igual que las compras: hay recibos que se
@@ -380,9 +395,9 @@
      vez: estaban en el presupuesto y valían para todas las quincenas a la vez.
      No sirve — cada quincena tiene los suyos, porque no todas traen los mismos
      recibos. Para no tener que reescribirlos cada quince días está
-     `fijosDelVecino`, que alimenta el botón «copiar los del periodo anterior»:
-     explícito y de un toque, en vez de una herencia automática que luego nadie
-     entiende de dónde sale.
+     `apuntesDelVecino`, que alimenta el botón «copiar los del periodo
+     anterior»: explícito y de un toque, en vez de una herencia automática que
+     luego nadie entiende de dónde sale. Sólo lo usa la caja `fijos`.
 
      Lo que sí hacen es **descontar del presupuesto**, y tienen que hacerlo: si
      de ₡500.000 hay ₡200.000 comprometidos, lo que queda para comprar son
@@ -393,14 +408,20 @@
      exactamente el trabajo que esta pantalla existe para ahorrar.
   --------------------------------------------------------------------------- */
 
-  /* `monedaPre` es la del presupuesto, y sólo se usa de red: los gastos fijos
-     de antes de que hubiera monedas no la llevan, y todos aquellos se
-     escribieron en la del presupuesto. */
-  function limpiarFijos(lista, monedaPre) {
+  // Las dos cajas. Cualquier otro valor se trata como 'fijos', que es la que
+  // existía antes y la que tienen los datos de siempre.
+  const CAJAS = ['fijos', 'otros'];
+  function nombreDeCaja(caja) { return CAJAS.indexOf(caja) >= 0 ? caja : 'fijos'; }
+
+  /* `monedaPre` es la del presupuesto, y sólo se usa de red: los apuntes de
+     antes de que hubiera monedas no la llevan, y todos aquellos se escribieron
+     en la del presupuesto. */
+  function limpiarApuntes(lista, monedaPre, caja) {
     const base = monedaPre === 'USD' ? 'USD' : 'CRC';
+    const porDefecto = nombreDeCaja(caja) === 'otros' ? 'Otro gasto' : 'Gasto fijo';
     return (Array.isArray(lista) ? lista : []).map((f) => ({
-      id: (f && f.id) || uid('fijo'),
-      nombre: String((f && f.nombre) || '').trim() || 'Gasto fijo',
+      id: (f && f.id) || uid('apunte'),
+      nombre: String((f && f.nombre) || '').trim() || porDefecto,
       monto: Number(f && f.monto) || 0,
       moneda: (f && (f.moneda === 'USD' || f.moneda === 'CRC')) ? f.moneda : base,
       // Sin estampar todavía va a 0, y entonces `convertir` usa el de hoy.
@@ -408,67 +429,76 @@
     })).filter((f) => f.monto > 0);
   }
 
-  function fijosDe(pre, ciclo) {
+  function apuntesDe(pre, ciclo, caja) {
     const clave = claveDeCiclo(pre, ciclo);
     if (!pre || !clave) return [];
-    return limpiarFijos((pre.fijos || {})[clave], pre.moneda);
+    const c = nombreDeCaja(caja);
+    return limpiarApuntes((pre[c] || {})[clave], pre.moneda, c);
   }
 
-  /* Lo que este gasto fijo le quita al presupuesto, en la moneda del
-     presupuesto. Igual que con las compras, manda el tipo de cambio que se
-     estampó al apuntarlo, no el de hoy. */
-  function montoFijoEn(fijo, moneda) {
-    if (!fijo) return 0;
-    return convertir(fijo.monto, fijo.moneda || moneda, moneda, fijo.tipoCambio);
+  /* Lo que este apunte le quita al presupuesto, en la moneda del presupuesto.
+     Igual que con las compras, manda el tipo de cambio que se estampó al
+     apuntarlo, no el de hoy. */
+  function montoApuntadoEn(apunte, moneda) {
+    if (!apunte) return 0;
+    return convertir(apunte.monto, apunte.moneda || moneda, moneda, apunte.tipoCambio);
   }
 
-  function totalFijos(pre, ciclo) {
+  function totalApuntes(pre, ciclo, caja) {
     if (!pre) return 0;
-    const suma = fijosDe(pre, ciclo).reduce((s, f) => s + montoFijoEn(f, pre.moneda), 0);
+    const suma = apuntesDe(pre, ciclo, caja)
+      .reduce((s, f) => s + montoApuntadoEn(f, pre.moneda), 0);
     return D.redondear(suma, pre.moneda);
   }
 
-  function setFijos(presupuestoId, ciclo, lista) {
+  function setApuntes(presupuestoId, ciclo, caja, lista) {
     const pre = presupuesto(presupuestoId);
     const clave = claveDeCiclo(pre, ciclo);
     if (!pre || !clave) return null;
-    if (!pre.fijos || Array.isArray(pre.fijos)) pre.fijos = {};
+    const c = nombreDeCaja(caja);
+    if (!pre[c] || Array.isArray(pre[c])) pre[c] = {};
     // El tipo de cambio se estampa aquí, que es la única puerta de escritura, y
     // siempre: haga falta convertir hoy o no, mañana puede hacer falta.
-    const limpia = limpiarFijos(lista, pre.moneda).map((f) => Object.assign({}, f, {
+    const limpia = limpiarApuntes(lista, pre.moneda, c).map((f) => Object.assign({}, f, {
       tipoCambio: f.tipoCambio || Number(ajustes().tipoCambio) || 1
     }));
-    if (limpia.length) pre.fijos[clave] = limpia;
-    else delete pre.fijos[clave];
+    if (limpia.length) pre[c][clave] = limpia;
+    else delete pre[c][clave];
     save();
     return pre;
   }
 
-  /* Los fijos del periodo de al lado, para poder copiarlos sin reescribirlos.
+  /* Los apuntes del periodo de al lado, para poder copiarlos sin reescribirlos.
      Se miran los dos lados: lo normal es traérselos del anterior, pero si se
-     está rellenando una quincena vieja el que tiene los datos es el siguiente. */
-  function fijosDelVecino(pre, ciclo) {
+     está rellenando una quincena vieja el que tiene los datos es el siguiente.
+
+     Sólo tiene sentido con los fijos. Un imprevisto no se repite, así que
+     ofrecer «copiar los del periodo anterior» en la caja de otros gastos sería
+     invitar a apuntar dos veces algo que pasó una. */
+  function apuntesDelVecino(pre, ciclo, caja) {
     const previo = cicloVecino(pre, ciclo, -1);
-    const deAtras = previo ? fijosDe(pre, previo) : [];
+    const deAtras = previo ? apuntesDe(pre, previo, caja) : [];
     if (deAtras.length) return { lista: deAtras, ciclo: previo, direccion: -1 };
     const posterior = cicloVecino(pre, ciclo, +1);
-    const deDelante = posterior ? fijosDe(pre, posterior) : [];
+    const deDelante = posterior ? apuntesDe(pre, posterior, caja) : [];
     if (deDelante.length) return { lista: deDelante, ciclo: posterior, direccion: +1 };
     return null;
   }
 
-  /* Cuántos periodos llevan fijos apuntados. Sirve para avisar antes de borrar
-     lo que se perdería al mover las fechas de los periodos. */
-  function periodosConFijos(pre) {
-    const mapa = (pre && pre.fijos) || {};
+  /* Cuántos periodos llevan apuntes en esta caja. Sirve para avisar antes de
+     borrar lo que se perdería al mover las fechas de los periodos. */
+  function periodosConApuntes(pre, caja) {
+    const c = nombreDeCaja(caja);
+    const mapa = (pre && pre[c]) || {};
     if (Array.isArray(mapa)) return [];
-    return Object.keys(mapa).filter((k) => limpiarFijos(mapa[k], pre.moneda).length).sort();
+    return Object.keys(mapa)
+      .filter((k) => limpiarApuntes(mapa[k], pre.moneda, c).length).sort();
   }
 
-  function olvidarFijos(presupuestoId) {
+  function olvidarApuntes(presupuestoId, caja) {
     const pre = presupuesto(presupuestoId);
     if (!pre) return null;
-    pre.fijos = {};
+    pre[nombreDeCaja(caja)] = {};
     save();
     return pre;
   }
@@ -776,11 +806,35 @@
     return salida;
   }
 
+  /* El orden de CUALQUIER lista de gastos, del más nuevo al más viejo. Vive
+     aquí y no repartido por las pantallas para que la ficha del presupuesto y
+     el Resumen no puedan ordenar distinto.
+
+     Tres criterios, en este orden:
+
+     1. **El día.** Es lo único que siempre se sabe.
+     2. **La hora**, cuando se sabe. El correo del banco la trae y `bancos.js`
+        ya la leía; lo que pasaba es que se tiraba al guardar el gasto, así que
+        todas las compras de un mismo día quedaban empatadas y salían en el
+        orden en que se apuntaron, no en el que ocurrieron.
+     3. **El momento en que se escribió** (`ts`), sólo para deshacer empates.
+
+     Los que no llevan hora van DESPUÉS de los que sí dentro de su día: no se
+     sabe cuándo fueron, y colarlos arriba sería inventarse un orden. La cadena
+     vacía ordena por debajo de cualquier «08:15» sola, sin caso aparte. */
+  function porFechaYHora(a, b) {
+    if (a.fecha !== b.fecha) return b.fecha.localeCompare(a.fecha);
+    const ha = a.hora || '';
+    const hb = b.hora || '';
+    if (ha !== hb) return hb.localeCompare(ha);
+    return (b.ts || 0) - (a.ts || 0);
+  }
+
   function gastosDe(presupuestoId, ciclo) {
     return load().gastos
       .filter((g) => estaEn(g, presupuestoId))
       .filter((g) => enCiclo(g, ciclo))
-      .sort((a, b) => (b.fecha === a.fecha ? (b.ts || 0) - (a.ts || 0) : b.fecha.localeCompare(a.fecha)));
+      .sort(porFechaYHora);
   }
 
   function gasto(id) { return load().gastos.find((g) => g.id === id) || null; }
@@ -794,9 +848,14 @@
       comercio: '',
       nota: '',
       fecha: D.hoy(),
+      hora: '',
       origen: 'manual',
+      // El instante REAL en que se escribió, no la fecha elegida. Sólo se usa
+      // para deshacer empates: el día y la hora del gasto ya los llevan `fecha`
+      // y `hora`, así que `ts` no tiene que codificar nada más.
       ts: Date.now()
     }, entrada);
+    item.hora = limpiarHora(item.hora);
     item.monto = Number(item.monto) || 0;
     // El tipo de cambio se estampa siempre, haga falta convertir o no: mañana
     // el gasto puede acabar en un presupuesto de la otra moneda.
@@ -807,10 +866,22 @@
     return item;
   }
 
+  /* 'HH:MM' en 24 horas, o cadena vacía si no se sabe. Nunca `undefined`: el
+     orden compara horas como texto y un hueco tiene que ser comparable. */
+  function limpiarHora(v) {
+    const m = String(v || '').match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return '';
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (h > 23 || min > 59) return '';
+    return String(h).padStart(2, '0') + ':' + m[2];
+  }
+
   function updateGasto(id, cambios) {
     const item = gasto(id);
     if (!item) return null;
     Object.assign(item, cambios);
+    item.hora = limpiarHora(item.hora);
     item.monto = Number(item.monto) || 0;
     item.tipoCambio = Number(item.tipoCambio) || Number(ajustes().tipoCambio) || 1;
     item.asignaciones = limpiarAsignaciones(item.asignaciones, item.monto);
@@ -840,14 +911,16 @@
     const asignado = montoDeCiclo(pre, c);
     const propio = tieneMontoPropio(pre, c);
 
-    /* Los gastos fijos salen del presupuesto antes que nada: son dinero que ya
-       está comprometido. `gastado` sigue significando lo mismo que siempre
-       —compras, y solo compras—, así que ningún gráfico ni ningún tope cambia
-       de sentido; lo que cambia es que `disponible` deja de contar un dinero
-       que en realidad no está. */
-    const fijos = totalFijos(pre, c);
-    const paraCompras = D.redondear(asignado - fijos, pre.moneda);
-    const comprometido = D.redondear(fijos + gastado, pre.moneda);
+    /* Los gastos fijos y los otros gastos salen del presupuesto antes que nada:
+       son dinero que ya está comprometido. `gastado` sigue significando lo
+       mismo que siempre —compras, y solo compras—, así que ningún gráfico ni
+       ningún tope cambia de sentido; lo que cambia es que `disponible` deja de
+       contar un dinero que en realidad no está. */
+    const fijos = totalApuntes(pre, c, 'fijos');
+    const otros = totalApuntes(pre, c, 'otros');
+    const noCompras = D.redondear(fijos + otros, pre.moneda);
+    const paraCompras = D.redondear(asignado - noCompras, pre.moneda);
+    const comprometido = D.redondear(noCompras + gastado, pre.moneda);
     const disponible = D.redondear(asignado - comprometido, pre.moneda);
 
     const hoy = D.hoy();
@@ -870,15 +943,21 @@
       asignado,
       asignadoPropio: propio,
       fijos,
-      listaFijos: fijosDe(pre, c),
+      listaFijos: apuntesDe(pre, c, 'fijos'),
+      otros,
+      listaOtros: apuntesDe(pre, c, 'otros'),
+      // Los dos juntos: es lo que hay que restar del presupuesto antes de saber
+      // con cuánto se puede ir a comprar, y casi todas las pantallas lo quieren
+      // así, de una pieza.
+      noCompras,
       paraCompras,
       gastado,
       comprometido,
       disponible,
-      // La barra mide el presupuesto ENTERO, fijos incluidos: si la mitad del
-      // dinero ya está comprometida, eso hay que verlo el día 1.
+      // La barra mide el presupuesto ENTERO, lo comprometido incluido: si la
+      // mitad del dinero ya está apartada, eso hay que verlo el día 1.
       consumido: D.porcentaje(comprometido, asignado),
-      consumidoFijos: D.porcentaje(fijos, asignado),
+      consumidoNoCompras: D.porcentaje(noCompras, asignado),
       excedido: comprometido > asignado,
       diasTotales,
       diasRestantes,
@@ -1156,9 +1235,11 @@
     fechaDeReferencia, cicloDeReferencia,
     cicloDe, cicloActual, cicloVecino, enCiclo, cortesDe,
     montoDeCiclo, tieneMontoPropio, setMontoDeCiclo, periodosConMontoPropio, olvidarMontosPropios,
-    fijosDe, totalFijos, montoFijoEn, setFijos, fijosDelVecino, periodosConFijos, olvidarFijos,
+    apuntesDe, totalApuntes, montoApuntadoEn, setApuntes, apuntesDelVecino,
+    periodosConApuntes, olvidarApuntes,
     gastos, gasto, gastosDe, addGasto, updateGasto, deleteGasto, montoEnMonedaDe,
     asignaciones, presupuestosDe, primerPresupuesto, estaEn, montoAsignadoEn, convertir,
+    porFechaYHora,
     gmail, setGmail, remitentes, pendientes, pendiente, addPendiente, cerrarPendiente,
     noReconocidos, addNoReconocido, cerrarNoReconocido,
     resumen, porCategoria, porDia,
