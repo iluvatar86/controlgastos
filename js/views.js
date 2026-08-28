@@ -296,9 +296,42 @@
     // el de hoy, que estaría vacío.
     const ciclo = Store.cicloDe(pre, anclas[id] || Store.fechaDeReferencia(pre));
     const r = Store.resumen(pre, ciclo);
-    const cats = Store.porCategoria(pre, ciclo);
     const dias = Store.porDia(pre, ciclo);
     const esActual = !anclas[id] || Store.cicloActual(pre).inicio === ciclo.inicio;
+
+    /* ---------- el gráfico de cada día manda sobre «En qué se fue» -----------
+
+       Tocar una barra filtra el reparto por categorías a ese día. Las dos
+       tarjetas se montan aquí juntas porque tienen que hablarse.
+
+       Se repintan a mano, SIN pasar por `App.render()`, y eso es la clave: la
+       pantalla entera son gráficos y tarjetas largas, así que rehacerla
+       devolvería el scroll arriba justo cuando se acaba de tocar una barra que
+       está a media pantalla. Además el gráfico guarda dentro qué día está
+       marcado, y un `render` lo borraría. Es la misma razón por la que el
+       gráfico ya se repintaba solo antes de esto. */
+    let diaElegido = null;
+    const cajaCategorias = el('div');
+
+    function pintarCategorias() {
+      // Un día suelto es un ciclo de un solo día: `porCategoria` ya sabe
+      // recortar por fechas, así que no hace falta nada nuevo en el almacén.
+      const recorte = diaElegido ? { inicio: diaElegido, fin: diaElegido } : ciclo;
+      D.clear(cajaCategorias);
+      cajaCategorias.appendChild(tarjetaDeCategorias(pre, Store.porCategoria(pre, recorte), {
+        fecha: diaElegido,
+        alQuitarFiltro: () => { if (panelDia) panelDia.elegirDia(null); }
+      }));
+    }
+
+    const panelDia = r.numGastos ? Charts.panelDiario({
+      dias: dias,
+      moneda: pre.moneda,
+      pista: 'Toca una barra para ver en qué se fue ese día.',
+      alElegir: (fecha) => { diaElegido = fecha; pintarCategorias(); }
+    }) : null;
+
+    if (r.numGastos) pintarCategorias();
 
     return el('div', [
       volver(cerrado ? '#/historial' : '#/presupuestos', cerrado ? 'Historial' : 'Presupuestos'),
@@ -359,10 +392,10 @@
 
       r.numGastos ? el('section.card', [
         el('h2.card-title', { text: 'Gasto de cada día' }),
-        Charts.panelDiario({ dias: dias, moneda: pre.moneda })
+        panelDia
       ]) : null,
 
-      cats.length ? tarjetaDeCategorias(pre, cats, r) : null,
+      r.numGastos ? cajaCategorias : null,
 
       el('section.card', [
         el('h2.card-title', { text: 'Gastos' + (r.numGastos ? ' (' + r.numGastos + ')' : '') }),
@@ -392,9 +425,22 @@
      El resto de la ficha —el saldo, los gráficos, los gastos— se queda en la
      moneda del presupuesto a propósito: es su dinero y su tope, y pasarlo todo
      a colones convertiría un presupuesto de $2.000 en uno de ₡1.020.000 que él
-     nunca fijó. Esta tarjeta es la única que responde a otra pregunta. */
-  function tarjetaDeCategorias(pre, cats, r) {
-    const base = (cats[0] && cats[0].monedaBase) || 'CRC';
+     nunca fijó. Esta tarjeta es la única que responde a otra pregunta.
+
+     **Puede enseñar un solo día.** Al tocar una barra de «Gasto de cada día»,
+     esta tarjeta pasa a repartir SÓLO ese día. Es la pregunta que sigue
+     naturalmente a la anterior: se ve un pico en el gráfico y lo próximo que
+     uno quiere saber es en qué se fue ESE día. Antes había que bajar a la lista
+     de gastos y sumarlo de cabeza.
+
+     El porcentaje se calcula siempre contra lo que la tarjeta está enseñando,
+     no contra el periodo: mirando un día, «32 %» significa un tercio de ese
+     día. Contra el total del periodo saldrían porcentajes diminutos que no
+     dicen nada. */
+  function tarjetaDeCategorias(pre, cats, opciones) {
+    const op = opciones || {};
+    const base = (cats[0] && cats[0].monedaBase) ||
+      Store.ajustes().monedaPorDefecto || 'CRC';
     const enCasa = pre.moneda !== base;
 
     // El anillo reparte por el mismo número que se enseña, o los trozos no
@@ -404,8 +450,35 @@
       : cats;
     const total = partes.reduce((s, c) => s + c.total, 0);
 
-    return el('section.card', [
+    const cabecera = el('div.card-head', [
       el('h2.card-title', { text: 'En qué se fue' }),
+      // La salida del filtro va arriba y siempre visible: si estuviera al final
+      // de una lista de quince categorías habría que buscarla.
+      op.fecha ? el('button.link-soft.link-boton', {
+        type: 'button', text: 'Todo el periodo', onclick: op.alQuitarFiltro
+      }) : null
+    ]);
+
+    const marca = op.fecha
+      ? el('p.filtro-dia', { text: 'Solo ' + etiquetaDeDia(op.fecha) })
+      : null;
+
+    /* Un día sin compras no es un error ni una tarjeta vacía: es una respuesta,
+       y hay que darla. Sin esto la tarjeta desaparecería justo después de
+       tocar la barra, que se lee como que algo se rompió. */
+    if (!cats.length) {
+      return el('section.card', [
+        cabecera,
+        marca,
+        el('p.muted', {
+          text: op.fecha ? 'Ese día no hubo compras.' : 'Todavía no hay compras en este periodo.'
+        })
+      ]);
+    }
+
+    return el('section.card', [
+      cabecera,
+      marca,
       enCasa ? el('p.muted', {
         text: 'En ' + (base === 'CRC' ? 'colones' : 'dólares') +
           ', con el tipo de cambio de cada compra.'
@@ -422,9 +495,7 @@
             el('span', { text: D.dinero(enCasa ? c.totalBase : c.total, enCasa ? base : pre.moneda) }),
             enCasa ? el('span.cat-otra', { text: D.dinero(c.total, pre.moneda) }) : null
           ]),
-          el('span.cat-pct', {
-            text: D.porcentaje(enCasa ? c.totalBase : c.total, enCasa ? total : r.gastado) + ' %'
-          })
+          el('span.cat-pct', { text: D.porcentaje(enCasa ? c.totalBase : c.total, total) + ' %' })
         ])))
       ])
     ]);

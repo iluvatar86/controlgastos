@@ -734,6 +734,22 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 .cat-total { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; font-variant-numeric: tabular-nums; font-weight: 600; }
 .cat-otra { font-size: .6875rem; font-weight: 500; color: var(--muted); }
 .cat-row.is-doble { align-items: flex-start; }
+
+/* Cuando la tarjeta enseña un solo día hay que decirlo bien claro, o los
+   números parecen los del periodo entero y no cuadran con nada. */
+.filtro-dia {
+  margin: 0;
+  align-self: flex-start;
+  /* «Solo 12 de septiembre» parte en dos líneas dentro de una píldora
+     encogida, y queda como un error. */
+  white-space: nowrap;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: .8125rem;
+  font-weight: 650;
+}
 .cat-pct { color: var(--muted); font-size: .75rem; width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
 
 .cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 7px; }

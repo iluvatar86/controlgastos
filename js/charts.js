@@ -213,6 +213,12 @@
   function panelDiario(opciones) {
     const dias = opciones.dias || [];
     const moneda = opciones.moneda;
+    // Quien lo monta puede enterarse de qué día se tocó, para enseñar ese día
+    // en otro sitio de la pantalla. Y puede cambiar la frase de abajo, porque
+    // el toque no significa lo mismo en el Resumen que dentro de un
+    // presupuesto, donde además filtra la tarjeta de categorías.
+    const alElegir = opciones.alElegir;
+    const pista = opciones.pista || 'Toca una barra para ver el gasto de ese día.';
     let elegido = null;
 
     const caja = D.el('div.chart-panel');
@@ -229,7 +235,7 @@
       const d = dias.find((x) => x.fecha === elegido);
       if (!d) {
         pie.className = 'chart-caption';
-        pie.textContent = 'Toca una barra para ver el gasto de ese día.';
+        pie.textContent = pista;
         return;
       }
       if (!d.total) {
@@ -250,17 +256,27 @@
         elegido: elegido,
         alTocar: (d) => {
           // Tocar el mismo día otra vez lo deselecciona.
-          elegido = (elegido === d.fecha) ? null : d.fecha;
-          pintar();
-          escribirPie();
+          elegir((elegido === d.fecha) ? null : d.fecha);
         }
       }));
+    }
+
+    function elegir(fecha) {
+      elegido = fecha || null;
+      pintar();
+      escribirPie();
+      if (alElegir) alElegir(elegido);
     }
 
     pintar();
     escribirPie();
     caja.appendChild(hueco);
     caja.appendChild(pie);
+
+    /* Se cuelga del nodo para poder quitar la selección desde fuera —desde el
+       «Ver todo el periodo» de la tarjeta de abajo—, que si no se quedaría la
+       barra marcada mientras el reparto ya enseña el periodo entero. */
+    caja.elegirDia = elegir;
     return caja;
   }
 
