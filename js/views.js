@@ -312,26 +312,37 @@
        gráfico ya se repintaba solo antes de esto. */
     let diaElegido = null;
     const cajaCategorias = el('div');
+    const cajaGastos = el('div');
 
-    function pintarCategorias() {
+    // Un solo estado para las dos tarjetas: el día elegido es uno, y las dos
+    // tienen que estar diciendo lo mismo al mismo tiempo.
+    const opcionesDelFiltro = () => ({
+      fecha: diaElegido,
+      alQuitarFiltro: () => { if (panelDia) panelDia.elegirDia(null); }
+    });
+
+    function pintarFiltrables() {
       // Un día suelto es un ciclo de un solo día: `porCategoria` ya sabe
       // recortar por fechas, así que no hace falta nada nuevo en el almacén.
       const recorte = diaElegido ? { inicio: diaElegido, fin: diaElegido } : ciclo;
+      const gastos = diaElegido ? r.gastos.filter((g) => g.fecha === diaElegido) : r.gastos;
+
       D.clear(cajaCategorias);
-      cajaCategorias.appendChild(tarjetaDeCategorias(pre, Store.porCategoria(pre, recorte), {
-        fecha: diaElegido,
-        alQuitarFiltro: () => { if (panelDia) panelDia.elegirDia(null); }
-      }));
+      cajaCategorias.appendChild(
+        tarjetaDeCategorias(pre, Store.porCategoria(pre, recorte), opcionesDelFiltro()));
+
+      D.clear(cajaGastos);
+      cajaGastos.appendChild(tarjetaDeGastos(pre, gastos, opcionesDelFiltro()));
     }
 
     const panelDia = r.numGastos ? Charts.panelDiario({
       dias: dias,
       moneda: pre.moneda,
-      pista: 'Toca una barra para ver en qué se fue ese día.',
-      alElegir: (fecha) => { diaElegido = fecha; pintarCategorias(); }
+      pista: 'Toca una barra para ver ese día abajo.',
+      alElegir: (fecha) => { diaElegido = fecha; pintarFiltrables(); }
     }) : null;
 
-    if (r.numGastos) pintarCategorias();
+    pintarFiltrables();
 
     return el('div', [
       volver(cerrado ? '#/historial' : '#/presupuestos', cerrado ? 'Historial' : 'Presupuestos'),
@@ -397,11 +408,7 @@
 
       r.numGastos ? cajaCategorias : null,
 
-      el('section.card', [
-        el('h2.card-title', { text: 'Gastos' + (r.numGastos ? ' (' + r.numGastos + ')' : '') }),
-        r.numGastos ? listaDeGastos(r.gastos, pre) :
-          el('p.muted', { text: 'Todavía no hay ningún gasto apuntado en este periodo.' })
-      ]),
+      cajaGastos,
 
       tarjetaCompartir(pre, ciclo)
     ]);
@@ -996,7 +1003,14 @@
   }
 
   /* Los gastos van agrupados por día, con el total del día a la derecha. */
-  function listaDeGastos(lista, pre) {
+  /* `sinDias` quita las cabeceras de día. Se usa cuando la lista ya está
+     filtrada a un solo día: la chapa de arriba de la tarjeta ya dice cuál es, y
+     repetir la fecha dos centímetros más abajo sobra. */
+  function listaDeGastos(lista, pre, opciones) {
+    if (opciones && opciones.sinDias) {
+      return el('ul.gasto-list', lista.map((g) => filaDeGasto(g, pre)));
+    }
+
     const grupos = [];
     lista.forEach((g) => {
       const ultimo = grupos[grupos.length - 1];
@@ -1020,6 +1034,32 @@
     if (iso === D.hoy()) return 'Hoy';
     if (iso === D.sumarDias(D.hoy(), -1)) return 'Ayer';
     return D.fechaMedia(iso);
+  }
+
+  /* La lista de gastos uno a uno, que se filtra al mismo día que «En qué se
+     fue». Las dos tarjetas responden a la misma pregunta desde dos lados —el
+     reparto y el detalle—, así que filtrar solo una dejaría media pantalla
+     contestando de un día y la otra media del periodo entero. */
+  function tarjetaDeGastos(pre, lista, opciones) {
+    const op = opciones || {};
+    const vacio = op.fecha
+      ? 'Ese día no hay gastos apuntados.'
+      : 'Todavía no hay ningún gasto apuntado en este periodo.';
+
+    return el('section.card', [
+      el('div.card-head', [
+        // El número cuenta lo que se está enseñando, no lo que hay en el
+        // periodo: si dice 12 y debajo hay 2 filas, el que manda es el número.
+        el('h2.card-title', { text: 'Gastos' + (lista.length ? ' (' + lista.length + ')' : '') }),
+        op.fecha ? el('button.link-soft.link-boton', {
+          type: 'button', text: 'Todo el periodo', onclick: op.alQuitarFiltro
+        }) : null
+      ]),
+      op.fecha ? el('p.filtro-dia', { text: 'Solo ' + etiquetaDeDia(op.fecha) }) : null,
+      lista.length
+        ? listaDeGastos(lista, pre, { sinDias: !!op.fecha })
+        : el('p.muted', { text: vacio })
+    ]);
   }
 
   /* En la lista de un presupuesto manda el importe que le quita A ESE
