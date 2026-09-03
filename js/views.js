@@ -19,6 +19,15 @@
      servidor local, en la dirección publicada y en cualquier otra copia. */
   const GUIA_GMAIL = 'guia.html';
 
+  /* Sin tildes y en minúsculas, para comparar lo que alguien escribe con lo que
+     hay guardado: así «cafeteria» encuentra «Cafetería». El rango del `replace`
+     son los acentos sueltos que deja `NFD` al separar la letra de su tilde.
+
+     Lo usan el buscador de gastos y las sugerencias de comercio. */
+  function sinTildes(s) {
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  }
+
   /* ---------- piezas sueltas ------------------------------------------------ */
 
   function header(titulo, sub, extra) {
@@ -312,13 +321,18 @@
        gráfico ya se repintaba solo antes de esto. */
     let diaElegido = null;
     const cajaCategorias = el('div');
-    const cajaGastos = el('div');
 
     // Un solo estado para las dos tarjetas: el día elegido es uno, y las dos
     // tienen que estar diciendo lo mismo al mismo tiempo.
-    const opcionesDelFiltro = () => ({
-      fecha: diaElegido,
-      alQuitarFiltro: () => { if (panelDia) panelDia.elegirDia(null); }
+    const quitarElDia = () => { if (panelDia) panelDia.elegirDia(null); };
+    const opcionesDelFiltro = () => ({ fecha: diaElegido, alQuitarFiltro: quitarElDia });
+
+    /* La de gastos se monta una sola vez y luego se le pasan listas: lleva
+       dentro el campo de búsqueda, y rehacerla en cada tecla lo dejaría sin
+       foco. Ver el comentario de `tarjetaDeGastos`. */
+    const tarjetaGastos = tarjetaDeGastos(pre, {
+      hayGastos: r.numGastos > 0,
+      alQuitarFiltro: quitarElDia
     });
 
     function pintarFiltrables() {
@@ -331,8 +345,7 @@
       cajaCategorias.appendChild(
         tarjetaDeCategorias(pre, Store.porCategoria(pre, recorte), opcionesDelFiltro()));
 
-      D.clear(cajaGastos);
-      cajaGastos.appendChild(tarjetaDeGastos(pre, gastos, opcionesDelFiltro()));
+      tarjetaGastos.mostrar(gastos, diaElegido);
     }
 
     const panelDia = r.numGastos ? Charts.panelDiario({
@@ -408,7 +421,7 @@
 
       r.numGastos ? cajaCategorias : null,
 
-      cajaGastos,
+      tarjetaGastos,
 
       tarjetaCompartir(pre, ciclo)
     ]);
@@ -1005,9 +1018,14 @@
   /* Los gastos van agrupados por día, con el total del día a la derecha. */
   /* `sinDias` quita las cabeceras de día. Se usa cuando la lista ya está
      filtrada a un solo día: la chapa de arriba de la tarjeta ya dice cuál es, y
-     repetir la fecha dos centímetros más abajo sobra. */
+     repetir la fecha dos centímetros más abajo sobra.
+
+     `sinTotales` deja las cabeceras pero les quita el importe. Es para las
+     búsquedas: ahí cada día enseña sólo los gastos que coinciden, y un número a
+     la derecha de la fecha se leería como el total de ese día, que no lo es. */
   function listaDeGastos(lista, pre, opciones) {
-    if (opciones && opciones.sinDias) {
+    const op = opciones || {};
+    if (op.sinDias) {
       return el('ul.gasto-list', lista.map((g) => filaDeGasto(g, pre)));
     }
 
@@ -1023,7 +1041,7 @@
       return el('div.day-group', [
         el('div.day-head', [
           el('span', { text: etiquetaDeDia(grupo.fecha) }),
-          el('span', { text: D.dinero(totalDia, pre.moneda) })
+          op.sinTotales ? null : el('span', { text: D.dinero(totalDia, pre.moneda) })
         ]),
         el('ul.gasto-list', grupo.items.map((g) => filaDeGasto(g, pre)))
       ]);
@@ -1036,30 +1054,124 @@
     return D.fechaMedia(iso);
   }
 
-  /* La lista de gastos uno a uno, que se filtra al mismo día que «En qué se
-     fue». Las dos tarjetas responden a la misma pregunta desde dos lados —el
-     reparto y el detalle—, así que filtrar solo una dejaría media pantalla
-     contestando de un día y la otra media del periodo entero. */
-  function tarjetaDeGastos(pre, lista, opciones) {
-    const op = opciones || {};
-    const vacio = op.fecha
-      ? 'Ese día no hay gastos apuntados.'
-      : 'Todavía no hay ningún gasto apuntado en este periodo.';
+  /* ---------- la tarjeta de «Gastos» ---------------------------------------
 
-    return el('section.card', [
-      el('div.card-head', [
-        // El número cuenta lo que se está enseñando, no lo que hay en el
-        // periodo: si dice 12 y debajo hay 2 filas, el que manda es el número.
-        el('h2.card-title', { text: 'Gastos' + (lista.length ? ' (' + lista.length + ')' : '') }),
-        op.fecha ? el('button.link-soft.link-boton', {
-          type: 'button', text: 'Todo el periodo', onclick: op.alQuitarFiltro
-        }) : null
-      ]),
-      op.fecha ? el('p.filtro-dia', { text: 'Solo ' + etiquetaDeDia(op.fecha) }) : null,
-      lista.length
-        ? listaDeGastos(lista, pre, { sinDias: !!op.fecha })
-        : el('p.muted', { text: vacio })
+     La lista de gastos uno a uno. Se puede estrechar de dos maneras:
+
+     - Por **día**, y eso llega de fuera: lo manda el gráfico de arriba, y
+       estrecha a la vez «En qué se fue». Las dos tarjetas responden a la misma
+       pregunta desde dos lados —el reparto y el detalle—, así que filtrar sólo
+       una dejaría media pantalla contestando de un día y la otra media del
+       periodo entero.
+     - Por **búsqueda**, y eso vive aquí dentro y sólo afecta a esta lista.
+
+     Sólo puede haber una de las dos a la vez, y es a propósito: escribir suelta
+     el día, y elegir un día borra lo escrito. Las dos juntas se ven exactamente
+     igual que un buscador roto: se escribe «amazon», no sale nada, y la
+     explicación es una chapa de fecha que se tocó hace diez minutos.
+
+     Devuelve la tarjeta montada, con un método `mostrar(lista, dia)`. Se
+     construye UNA vez y se le van pasando listas; por dentro sólo se repinta lo
+     que cambia. Si la tarjeta entera se rehiciera, el campo de búsqueda sería un
+     elemento nuevo en cada letra: perdería el foco y en el móvil se cerraría el
+     teclado. Por lo mismo nada de esto pasa por `App.render()`. */
+  function tarjetaDeGastos(pre, opciones) {
+    const op = opciones || {};
+
+    let lista = [];    // lo que llega del filtro de día, o el periodo entero
+    let fecha = null;  // el día marcado en el gráfico, si hay alguno
+
+    const titulo = el('h2.card-title', { text: 'Gastos' });
+    const salida = el('button.link-soft.link-boton', {
+      type: 'button', text: 'Todo el periodo', onclick: op.alQuitarFiltro
+    });
+
+    const campo = el('input.busca-campo', {
+      type: 'text',
+      placeholder: 'Buscar comercio, nota o categoría',
+      autocomplete: 'off',
+      spellcheck: 'false',
+      // El teclado del móvil enseña una lupa en vez de un «Intro» que aquí no
+      // haría nada: la lista se va estrechando mientras se escribe.
+      enterkeyhint: 'search',
+      oninput: () => {
+        /* Escribir suelta el día, porque buscar es una pregunta sobre el
+           periodo entero. Quitarlo acaba llamando a `mostrar`, que repinta:
+           hacerlo también aquí sería pintar dos veces. */
+        if (fecha) op.alQuitarFiltro();
+        else pintar();
+      }
+    });
+
+    const borrar = el('button.busca-x', {
+      type: 'button', 'aria-label': 'Borrar la búsqueda', text: '✕',
+      onclick: () => { campo.value = ''; campo.focus(); pintar(); }
+    });
+
+    const buscador = el('div.buscador', [campo, borrar]);
+    buscador.hidden = !op.hayGastos;
+
+    const chapa = el('p.filtro-dia');
+    const suma = el('p.filtro-busca');
+    const cajaLista = el('div');
+
+    function pintar() {
+      const escrito = campo.value.trim();
+      const vistos = escrito ? lista.filter((g) => coincide(g, escrito)) : lista;
+
+      // El número cuenta lo que se está enseñando, no lo que hay en el periodo:
+      // si dice 12 y debajo hay 2 filas, el que manda es el número.
+      titulo.textContent = 'Gastos' + (vistos.length ? ' (' + vistos.length + ')' : '');
+
+      salida.hidden = !fecha;
+      chapa.hidden = !fecha;
+      if (fecha) chapa.textContent = 'Solo ' + etiquetaDeDia(fecha);
+
+      /* Buscando, la pregunta de detrás casi siempre es «¿cuánto llevo en
+         esto?». El total de lo que salió la contesta sin tener que sumar a
+         mano. */
+      suma.hidden = !(escrito && vistos.length);
+      if (!suma.hidden) {
+        const total = vistos.reduce((s, g) => s + Store.montoAsignadoEn(g, pre.id, pre.moneda), 0);
+        suma.textContent = 'Suman ' + D.dinero(total, pre.moneda);
+      }
+
+      borrar.hidden = !escrito;
+
+      D.clear(cajaLista);
+      cajaLista.appendChild(vistos.length
+        ? listaDeGastos(vistos, pre, { sinDias: !!fecha, sinTotales: !!escrito })
+        : el('p.muted', { text: nadaQueEnsenar(escrito, fecha) }));
+    }
+
+    function nadaQueEnsenar(escrito, dia) {
+      if (escrito) return 'Ningún gasto dice «' + escrito + '».';
+      if (dia) return 'Ese día no hay gastos apuntados.';
+      return 'Todavía no hay ningún gasto apuntado en este periodo.';
+    }
+
+    const card = el('section.card', [
+      el('div.card-head', [titulo, salida]),
+      buscador, chapa, suma, cajaLista
     ]);
+
+    card.mostrar = function (nueva, dia) {
+      lista = nueva || [];
+      fecha = dia || null;
+      // Elegir un día borra lo escrito, por lo de arriba.
+      if (fecha) campo.value = '';
+      pintar();
+    };
+
+    return card;
+  }
+
+  /* Busca donde está escrito lo que uno recuerda de una compra: el comercio, la
+     nota y el nombre de la categoría. Varias palabras tienen que salir todas,
+     pero en cualquier orden, para que «amaz prime» encuentre «Amazon Prime». */
+  function coincide(g, escrito) {
+    const heno = sinTildes([g.comercio, g.nota, Store.categoria(g.categoria).nombre].join(' '));
+    return sinTildes(escrito).split(/\s+/).every((palabra) => heno.indexOf(palabra) >= 0);
   }
 
   /* En la lista de un presupuesto manda el importe que le quita A ESE
@@ -1783,10 +1895,8 @@
     const comercios = Object.keys(usos)
       .sort((uno, otro) => (usos[otro] - usos[uno]) || uno.localeCompare(otro));
 
-    // Sin tildes y en minúsculas, para que «Cafetería» aparezca escribiendo
-    // «cafeteria». El rango es el de los acentos sueltos que deja `NFD`.
-    const sinTildes = (s) =>
-      String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    // Se compara sin tildes y en minúsculas (`sinTildes`, arriba del todo),
+    // para que «Cafetería» aparezca escribiendo «cafeteria».
 
     const sugerencias = el('div.sugerencias');
     sugerencias.hidden = true;
