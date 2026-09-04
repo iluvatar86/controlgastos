@@ -2010,9 +2010,28 @@
         conversion
       ]),
 
+      /* Segundo el comercio, la fecha y la nota: es lo que se está leyendo en
+         el tiquete o en el aviso del banco, y lo único que hay que teclear.
+         Detrás van las dos tarjetas que se contestan a toques —de qué
+         presupuesto sale y de qué categoría es—, y la categoría la última
+         porque es la que la app ya trae puesta. */
+      el('section.card', [
+        campo('Comercio', inComercio),
+        sugerencias,
+        campo('Fecha', inFecha),
+        avisoDeFechaFuera(b, elegidos),
+        b.fecha !== D.hoy() ? el('p.date-warning', [
+          'Este gasto se apuntará el ' + D.fechaLarga(b.fecha) + '. ',
+          el('button.link-today', {
+            type: 'button', text: 'Volver a hoy',
+            onclick: () => { b.fecha = D.hoy(); refrescar(); }
+          })
+        ]) : null,
+        campo('Nota', inNota)
+      ]),
+
       el('section.card', [
         el('h2.card-title', { text: '¿De qué presupuestos sale?' }),
-        el('p.muted', { text: 'Puedes marcar más de uno: una cena del viaje sale de la quincena y además cuenta contra el viaje.' }),
         el('div.pre-chips', lista.map((p) => {
           const activo = b.presupuestos.indexOf(p.id) >= 0;
           return el('button.pre-chip', {
@@ -2107,21 +2126,6 @@
           el('span.cat-btn-name', { text: c.nombre })
         ]))),
         avisoDeTope(b, elegidos, editando ? id : null)
-      ]),
-
-      el('section.card', [
-        campo('Comercio', inComercio),
-        sugerencias,
-        campo('Fecha', inFecha),
-        avisoDeFechaFuera(b, elegidos),
-        b.fecha !== D.hoy() ? el('p.date-warning', [
-          'Este gasto se apuntará el ' + D.fechaLarga(b.fecha) + '. ',
-          el('button.link-today', {
-            type: 'button', text: 'Volver a hoy',
-            onclick: () => { b.fecha = D.hoy(); refrescar(); }
-          })
-        ]) : null,
-        campo('Nota', inNota)
       ]),
 
       el('div.sticky-save', [
