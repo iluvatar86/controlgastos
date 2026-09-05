@@ -608,12 +608,16 @@
     const abrir = (lista, cambio) => {
       apuntesAbierto = clave;
       apuntesBorrador = lista.map((f) => ({
-        id: f.id, nombre: f.nombre, monto: String(f.monto), moneda: f.moneda || pre.moneda
+        id: f.id, nombre: f.nombre, monto: String(f.monto), moneda: f.moneda || pre.moneda,
+        categoria: f.categoria || '', nota: f.nota || '', fecha: f.fecha || ''
       }));
       apuntesCambio = cambio || cambioDeApuntes(lista, pre);
       App.render();
     };
-    const enBlanco = () => ({ id: Store.uid('apunte'), nombre: '', monto: '', moneda: pre.moneda });
+    const enBlanco = () => ({
+      id: Store.uid('apunte'), nombre: '', monto: '', moneda: pre.moneda,
+      categoria: '', nota: '', fecha: ''
+    });
 
     if (!total) {
       return el('section.card.fijos-vacio', [
@@ -628,8 +632,11 @@
             text: 'Copiar los de ' + vecino.ciclo.etiqueta + ' (' + vecino.lista.length + ')',
             // Copiados se llevan la moneda, pero no el tipo de cambio: son
             // recibos de OTRO periodo, y este se paga al precio de ahora.
+            // La categoría sí se copia, que el alquiler sigue siendo Hogar. La
+            // nota y la fecha no: dicen algo de AQUEL recibo, no de éste.
             onclick: () => abrir(vecino.lista.map((f) => ({
-              id: Store.uid('apunte'), nombre: f.nombre, monto: f.monto, moneda: f.moneda
+              id: Store.uid('apunte'), nombre: f.nombre, monto: f.monto, moneda: f.moneda,
+              categoria: f.categoria || '', nota: '', fecha: ''
             })), String(Store.ajustes().tipoCambio))
           }) : null
         ])
@@ -644,9 +651,16 @@
           onclick: () => abrir(guardados)
         })
       ]),
+      /* El emoji de la categoría sólo si alguno la lleva. Reservarle el hueco
+         cuando no hay ninguna dejaría una sangría que no explica nada, y con
+         unos sí y otros no los nombres tienen que seguir alineados. */
       el('ul.fijos', guardados.map((f) => {
         const otra = (f.moneda || pre.moneda) !== pre.moneda;
+        const cat = f.categoria ? Store.categoria(f.categoria) : null;
         return el('li.fijo', [
+          guardados.some((x) => x.categoria) ? el('span.fijo-emoji', {
+            text: cat ? cat.emoji : '', title: cat ? cat.nombre : ''
+          }) : null,
           el('span.fijo-nombre', { text: f.nombre }),
           // En otra moneda se enseñan las dos: lo que cobran, que es el dato
           // de verdad, y lo que le quita al presupuesto, que es lo que cuadra
@@ -688,6 +702,17 @@
   function etiquetaDelPeriodo(pre, ciclo) {
     if (pre.tipo !== 'recurrente') return 'este presupuesto';
     return ciclo && ciclo.etiqueta ? ciclo.etiqueta : 'este periodo';
+  }
+
+  /* `min` y `max` para el calendario de un apunte: los días de su periodo.
+     No es una validación —el apunte cuenta en su caja diga lo que diga la
+     fecha—, es para que el calendario se abra en la quincena que se está
+     editando en vez de en el mes de hoy, que al rellenar un periodo viejo son
+     dos o tres toques de más cada vez. Un presupuesto sin fin no pone `max`. */
+  function topesDeFecha(pre, ciclo) {
+    const desde = (ciclo && ciclo.inicio) || pre.inicio || null;
+    const hasta = (ciclo && ciclo.fin) || pre.fin || null;
+    return { min: desde, max: hasta };
   }
 
   /* El total se repinta a cada tecla sin rehacer la pantalla: volver a
@@ -779,14 +804,49 @@
             'aria-label': caso.importeFila,
             oninput: (e) => { f.monto = e.target.value; pintarTotal(); }
           })
-        ])
+        ]),
+
+        /* Categoría, fecha y nota: las tres opcionales y las tres sólo para
+           leerlas. No cuentan en «En qué se fue», no gastan tope y la fecha NO
+           mueve el apunte de periodo — el periodo lo manda la caja donde está
+           (ver `limpiarApuntes` y `fechaDeApunte` en el almacén).
+
+           Empiezan vacías a propósito: poner «Otros» y la fecha de hoy de
+           oficio sería decir dos cosas que nadie ha dicho, y en un periodo
+           viejo la de hoy sería además falsa. */
+        el('div.fijo-edit-par', [
+          el('select.fijo-edit-cat', {
+            'aria-label': 'Categoría (opcional)',
+            onchange: (e) => { f.categoria = e.target.value; }
+          }, [el('option', { value: '', selected: !f.categoria, text: 'Sin categoría' })]
+            .concat(Store.categorias().map((c) => el('option', {
+              value: c.key, selected: c.key === f.categoria, text: c.emoji + '  ' + c.nombre
+            })))),
+
+          /* Los topes del calendario son los del periodo. No impiden escribir
+             otra cosa —el apunte cuenta aquí igual—, pero hacen que el
+             calendario se abra donde toca en vez de en el mes de hoy. */
+          el('input.fijo-edit-fecha', Object.assign({
+            type: 'date', value: f.fecha, 'aria-label': 'Fecha (opcional)',
+            onchange: (e) => { f.fecha = e.target.value; }
+          }, topesDeFecha(pre, ciclo)))
+        ]),
+
+        el('input.note-input.fijo-edit-ancho', {
+          type: 'text', value: f.nota, placeholder: 'Nota (opcional)',
+          'aria-label': 'Nota',
+          oninput: (e) => { f.nota = e.target.value; }
+        })
       ]))) : null,
 
       el('button.btn.btn-small', {
         type: 'button', text: caso.anadir,
         onclick: () => {
           apuntesBorrador = lista.concat([
-            { id: Store.uid('apunte'), nombre: '', monto: '', moneda: pre.moneda }
+            {
+              id: Store.uid('apunte'), nombre: '', monto: '', moneda: pre.moneda,
+              categoria: '', nota: '', fecha: ''
+            }
           ]);
           refrescar();
           // El teclado se abre en la fila nueva: si no, hay que buscarla y
@@ -817,7 +877,8 @@
             const limpia = lista
               .map((f) => ({
                 id: f.id, nombre: f.nombre, monto: D.leerImporte(f.monto) || 0,
-                moneda: f.moneda, tipoCambio: tc
+                moneda: f.moneda, tipoCambio: tc,
+                categoria: f.categoria || '', nota: f.nota || '', fecha: f.fecha || ''
               }))
               .filter((f) => f.monto > 0);
             // La comparación con el presupuesto va en su moneda, o un recibo en

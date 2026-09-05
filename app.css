@@ -557,6 +557,10 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
   border-bottom: 1px solid var(--line-soft);
 }
 
+/* Ancho fijo para que los nombres queden alineados aunque una fila lleve
+   categoría y la de al lado no. */
+.fijo-emoji { flex: none; width: 20px; font-size: 1rem; line-height: 1; }
+
 .fijo-nombre { flex: 1; min-width: 0; font-size: .9375rem; }
 
 .fijo-monto {
@@ -606,6 +610,21 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 .fijo-edit-fila { grid-column: 1 / -1; display: flex; gap: 8px; align-items: stretch; }
 .fijo-edit-fila .seg { grid-template-columns: repeat(2, 1fr); flex: none; width: 92px; }
 .fijo-edit-monto { flex: 1; min-width: 0; }
+
+/* Categoría y fecha comparten línea; la nota va sola debajo, que es la que
+   puede crecer. El calendario pide un ancho fijo —lleva dentro «dd/mm/aaaa» y
+   su icono— y lo que sobra se lo queda el desplegable. */
+.fijo-edit-par { grid-column: 1 / -1; display: flex; gap: 8px; align-items: stretch; }
+.fijo-edit-ancho { grid-column: 1 / -1; }
+
+/* Un punto más pequeños y con menos aire a los lados, como los desplegables de
+   la bandeja: a tamaño normal los dos juntos no caben en los 283 px de la fila
+   y «UberDidi-Rides» se corta contra la flecha. */
+.fijo-edit-par select,
+.fijo-edit-par input { font-size: .875rem; padding-left: 8px; padding-right: 8px; }
+
+.fijo-edit-cat { flex: 1; min-width: 0; }
+.fijo-edit-fecha { flex: none; width: 136px; }
 
 /* Con el nombre de la fila delante a propósito: `.corte-quitar` se declara más
    abajo y, a igualdad de peso, ganaría ella y la × se iría a flotar. */
@@ -878,6 +897,9 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 /* ---------- repartir un gasto entre varios presupuestos ------------------- */
 
 .repartos { display: flex; flex-direction: column; gap: 10px; }
+/* En la bandeja el bloque se enseña y se esconde según cuántos presupuestos
+   haya marcados, y contra un `display: flex` el `[hidden]` no hace nada solo. */
+.repartos[hidden] { display: none; }
 
 .reparto-lista { display: flex; flex-direction: column; gap: 8px; }
 
@@ -1207,6 +1229,7 @@ input[type="file"] { padding: 9px; font-size: .8125rem; }
 
 .pendiente-linea { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .pendiente-linea .field-monto { min-width: 0; }
+.pendiente .seg { grid-template-columns: repeat(3, 1fr); }
 .pendiente select { min-height: 44px; padding: 10px 8px; font-size: .875rem; }
 
 .revision-estado { margin: 0; font-size: .8125rem; color: var(--muted); line-height: 1.45; }

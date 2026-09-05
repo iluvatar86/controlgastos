@@ -416,6 +416,16 @@
   /* `monedaPre` es la del presupuesto, y sólo se usa de red: los apuntes de
      antes de que hubiera monedas no la llevan, y todos aquellos se escribieron
      en la del presupuesto. */
+  /* La categoría y la nota de un apunte son ETIQUETAS, no clasificación: se
+     guardan para poder leerlas, pero no entran en `porCategoria` («En qué se
+     fue») ni gastan tope. Esas dos cosas hablan de COMPRAS, y estas cajas son
+     justo lo contrario: dinero comprometido que no es una compra. Si algún día
+     se quiere lo otro, se cambia aquí a sabiendas — pero entonces el total del
+     anillo deja de ser «Compras» y todos los porcentajes de todos los periodos
+     se mueven.
+
+     Las dos se quedan vacías cuando no hay nada: los apuntes de antes no las
+     llevaban, y ponerles «Otros» por defecto sería inventarse un dato. */
   function limpiarApuntes(lista, monedaPre, caja) {
     const base = monedaPre === 'USD' ? 'USD' : 'CRC';
     const porDefecto = nombreDeCaja(caja) === 'otros' ? 'Otro gasto' : 'Gasto fijo';
@@ -424,9 +434,22 @@
       nombre: String((f && f.nombre) || '').trim() || porDefecto,
       monto: Number(f && f.monto) || 0,
       moneda: (f && (f.moneda === 'USD' || f.moneda === 'CRC')) ? f.moneda : base,
+      categoria: String((f && f.categoria) || ''),
+      nota: String((f && f.nota) || '').trim(),
+      fecha: fechaDeApunte(f && f.fecha),
       // Sin estampar todavía va a 0, y entonces `convertir` usa el de hoy.
       tipoCambio: Number(f && f.tipoCambio) || 0
     })).filter((f) => f.monto > 0);
+  }
+
+  /* 'aaaa-mm-dd', o cadena vacía si no se sabe. Nunca `undefined`.
+
+     Un apunte pertenece a SU PERIODO —el de la caja donde está—, no a su fecha:
+     esto dice qué día se pagó, no dónde cuenta. Cambiarlo no lo mueve de
+     periodo, igual que la categoría no lo mete en «En qué se fue». */
+  function fechaDeApunte(v) {
+    const s = String(v || '').slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
   }
 
   function apuntesDe(pre, ciclo, caja) {

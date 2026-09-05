@@ -449,6 +449,8 @@
       (b.fecha + (b.hora || '')).localeCompare(a.fecha + (a.hora || '')));
     const presupuestos = Store.presupuestos();
 
+    podarBorradores(lista);
+
     return el('div', [
       Views.helpers.volver('#/resumen', 'Resumen'),
       Views.helpers.header('Gastos detectados en el correo',
@@ -599,43 +601,265 @@
     return D.fechaMedia(dia) + ' a las ' + hora;
   }
 
-  function tarjetaPendiente(p, presupuestos) {
-    // El presupuesto que se recordó de la última vez puede haberse desactivado
-    // desde entonces. Si ya no está en la lista, se cae al primero: sin esto
-    // el gasto se apuntaría a un presupuesto que ni siquiera se ve.
-    const disponibles = presupuestos.map((x) => x.id);
-    let elegido = p.presupuestoId || Store.gmail().presupuestoPorDefecto;
-    if (disponibles.indexOf(elegido) < 0) elegido = presupuestos[0].id;
+  /* ---------- lo que se lleva tocado en cada aviso, sin perderlo -------------
 
-    // Lo que se toca en la tarjeta se guarda aquí hasta que se pulse Apuntar.
-    const cambios = {
-      comercio: p.comercio,
-      monto: String(p.monto),
-      presupuestoId: elegido,
-      categoria: p.categoria || 'otros'
-    };
+     Apuntar o descartar un aviso redibuja la bandeja entera, y hasta ahora eso
+     se llevaba por delante lo que estuviera a medias en TODAS las demás
+     tarjetas: el comercio corregido a mano, el importe, el presupuesto elegido
+     y —desde que existe— si el movimiento era un gasto fijo o un imprevisto.
+     Con cinco avisos en la bandeja, dejar dos preparados y confirmar el tercero
+     obligaba a rehacer los otros dos.
+
+     Por eso el borrador de cada aviso vive aquí fuera, guardado por su `id`, y
+     no dentro de la tarjeta, que se construye de nuevo en cada redibujado. */
+  let borradores = {};
+
+  function borradorDe(p, presupuestos) {
+    if (!borradores[p.id]) {
+      borradores[p.id] = {
+        comercio: p.comercio,
+        monto: String(p.monto),
+        /* Una lista, no uno solo: la misma cena puede salir de la quincena y
+           además contar contra el viaje. Es lo que ya hacía el formulario de
+           apuntar a mano, y no había motivo para que el correo fuera más
+           pobre. */
+        presupuestos: [p.presupuestoId || Store.gmail().presupuestoPorDefecto],
+        modo: 'completo',
+        repartos: {},
+        categoria: p.categoria || 'otros',
+        // 'compra' apunta un gasto normal; 'fijos' y 'otros' lo meten en las
+        // dos cajas del periodo, que son las que NO cuentan como compra.
+        destino: 'compra',
+        /* Un aviso que nadie ha tocado sigue al presupuesto que se recordó del
+           último que se apuntó: es lo que hace que, tras mandar uno a la
+           tarjeta de crédito, los demás se ofrezcan solos ahí sin ir de uno en
+           uno. En cuanto se toca CUALQUIER cosa de la tarjeta deja de seguirlo,
+           porque entonces ya es una tarjeta preparada a mano y moverle el
+           presupuesto por detrás sería cambiarla sin avisar. */
+        tocado: false
+      };
+    }
+
+    const b = borradores[p.id];
+    if (!b.tocado) {
+      b.presupuestos = [p.presupuestoId || Store.gmail().presupuestoPorDefecto];
+    }
+
+    // Alguno puede haberse archivado desde entonces. Se quitan los que ya no
+    // están, y si no queda ninguno se cae al primero: sin esto el gasto se
+    // apuntaría a un presupuesto que ni siquiera se ve.
+    const vivos = presupuestos.map((x) => x.id);
+    b.presupuestos = b.presupuestos.filter((id) => vivos.indexOf(id) >= 0);
+    if (!b.presupuestos.length) b.presupuestos = [presupuestos[0].id];
+    return b;
+  }
+
+  /* Los avisos apuntados y descartados ya no vuelven, así que sus borradores
+     tampoco tienen por qué quedarse. Se poda al pintar la bandeja, que es
+     cuando se sabe cuáles siguen vivos. */
+  function podarBorradores(lista) {
+    const vivos = {};
+    lista.forEach((p) => { if (borradores[p.id]) vivos[p.id] = borradores[p.id]; });
+    borradores = vivos;
+  }
+
+  function tarjetaPendiente(p, presupuestos) {
+    const cambios = borradorDe(p, presupuestos);
 
     const inComercio = el('input', {
       type: 'text', value: cambios.comercio, placeholder: 'Comercio',
-      oninput: (e) => { cambios.comercio = e.target.value; }
+      oninput: (e) => { cambios.comercio = e.target.value; cambios.tocado = true; }
     });
 
     const inMonto = el('input.in-amount-sm', {
       type: 'text', inputmode: 'decimal', value: cambios.monto,
-      oninput: (e) => { cambios.monto = e.target.value; }
+      oninput: (e) => { cambios.monto = e.target.value; cambios.tocado = true; pintarSobrante(); }
     });
 
-    const selPresupuesto = el('select', {
-      onchange: (e) => { cambios.presupuestoId = e.target.value; }
-    }, presupuestos.map((x) => el('option', {
-      value: x.id, selected: x.id === cambios.presupuestoId, text: (x.emoji || '') + ' ' + x.nombre
-    })));
-
     const selCategoria = el('select', {
-      onchange: (e) => { cambios.categoria = e.target.value; }
+      onchange: (e) => { cambios.categoria = e.target.value; cambios.tocado = true; }
     }, Store.categorias().map((c) => el('option', {
       value: c.key, selected: c.key === cambios.categoria, text: c.emoji + '  ' + c.nombre
     })));
+
+    /* ---------- de qué tipo es este movimiento --------------------------------
+
+       Un aviso del banco no siempre es una compra. También llega el recibo de
+       la luz o el cargo de Netflix, que en la app viven en otro sitio: las dos
+       cajas del periodo, «Gastos fijos» y «Otros gastos», que se descuentan del
+       presupuesto pero NO cuentan como compra ni salen en «En qué se fue».
+       Antes había que descartar el correo y apuntarlo a mano en el presupuesto.
+
+       Se repinta a mano, sin `App.render()`: rehacer la bandeja perdería lo
+       tecleado en el comercio y el importe de ÉSTA y de todas las demás
+       tarjetas, que guardan sus cambios en memoria hasta que se pulsa Apuntar. */
+    const CAJAS = [
+      { valor: 'compra', texto: 'Compra' },
+      { valor: 'fijos', texto: 'Gasto fijo' },
+      { valor: 'otros', texto: 'Otro gasto' }
+    ];
+
+    const cajaSeg = el('div');
+    const cajaPre = el('div');
+    const cajaReparto = el('div.repartos');
+    const avisoDestino = el('p.hint');
+    const sobrante = el('p.conversion');
+
+    /* Sólo las compras pueden ir a varios sitios. Un apunte de «Gastos fijos» o
+       de «Otros gastos» vive dentro de UN presupuesto —es una línea de su caja,
+       no un gasto con asignaciones—, así que ahí las chapas funcionan como un
+       botón de radio: la que se toca sustituye a la anterior. */
+    const soloUno = () => cambios.destino !== 'compra';
+    const elegidos = () => cambios.presupuestos
+      .map((id) => Store.presupuesto(id)).filter(Boolean);
+
+    function pintarChips() {
+      D.clear(cajaPre);
+      cajaPre.appendChild(el('div.pre-chips', presupuestos.map((x) => {
+        const activo = cambios.presupuestos.indexOf(x.id) >= 0;
+        return el('button.pre-chip', {
+          type: 'button',
+          class: 'pre-chip' + (activo ? ' is-active' : ''),
+          'aria-pressed': activo ? 'true' : 'false',
+          style: activo ? { borderColor: x.color, background: x.color + '22' } : null,
+          onclick: () => {
+            cambios.tocado = true;
+            if (soloUno()) {
+              cambios.presupuestos = [x.id];
+            } else if (activo) {
+              // Nunca dejar el gasto sin ningún presupuesto.
+              if (cambios.presupuestos.length === 1) return;
+              cambios.presupuestos = cambios.presupuestos.filter((id) => id !== x.id);
+            } else {
+              cambios.presupuestos = cambios.presupuestos.concat([x.id]);
+              if (!cambios.repartos[x.id]) cambios.repartos[x.id] = '';
+            }
+            pintarDestino();
+          }
+        }, [
+          el('span.pre-chip-marca', { text: activo ? '✓' : '+' }),
+          el('span', { text: (x.emoji || '💰') + ' ' + x.nombre }),
+          Store.estaActivo(x) ? null : el('span.pre-chip-cerrado', { text: 'cerrado' })
+        ]);
+      })));
+    }
+
+    /* Cuánto falta o cuánto sobra al repartir a mano. Se pinta aparte, sin
+       rehacer las filas, porque si no cada tecla del reparto dejaría el campo
+       sin foco. Igual que en el formulario de apuntar a mano. */
+    function pintarSobrante() {
+      const reparte = cambios.destino === 'compra' &&
+        cambios.presupuestos.length > 1 && cambios.modo === 'repartido';
+      sobrante.hidden = !reparte;
+      if (!reparte) return;
+
+      const monto = D.leerImporte(cambios.monto) || 0;
+      const suma = cambios.presupuestos
+        .reduce((s, id) => s + (D.leerImporte(cambios.repartos[id]) || 0), 0);
+      const resto = D.redondear(monto - suma, p.moneda);
+      if (Math.abs(resto) < 0.005) {
+        sobrante.className = 'conversion is-ok';
+        sobrante.textContent = 'Repartido del todo.';
+      } else if (resto > 0) {
+        sobrante.className = 'conversion';
+        sobrante.textContent = 'Falta repartir ' + D.dinero(resto, p.moneda) + '.';
+      } else {
+        sobrante.className = 'conversion is-error';
+        sobrante.textContent = 'Te has pasado ' + D.dinero(Math.abs(resto), p.moneda) + ' del total.';
+      }
+    }
+
+    function pintarReparto() {
+      D.clear(cajaReparto);
+      const varios = cambios.destino === 'compra' && cambios.presupuestos.length > 1;
+      cajaReparto.hidden = !varios;
+      if (!varios) return;
+
+      cajaReparto.appendChild(el('div.field', [
+        el('span', { text: '¿Cómo cuenta en cada uno?' }),
+        Views.helpers.segmentado([
+          { valor: 'completo', texto: 'Completo en cada uno' },
+          { valor: 'repartido', texto: 'Repartir el importe' }
+        ], cambios.modo, (v) => { cambios.modo = v; cambios.tocado = true; pintarDestino(); })
+      ]));
+
+      if (cambios.modo === 'completo') {
+        cajaReparto.appendChild(el('p.hint-box', {
+          text: 'El importe entero se descuenta de los ' + cambios.presupuestos.length +
+            ' presupuestos. En los totales generales sigue contando una sola vez.'
+        }));
+        return;
+      }
+
+      cajaReparto.appendChild(el('p.hint-box', {
+        text: 'Di cuánto le toca a cada uno. La suma tiene que dar el importe total.'
+      }));
+      cajaReparto.appendChild(el('div.reparto-lista', elegidos().map((x) => el('label.reparto-fila', [
+        el('span.reparto-nombre', { text: (x.emoji || '💰') + ' ' + x.nombre }),
+        el('input.in-amount-sm', {
+          type: 'text', inputmode: 'decimal',
+          value: cambios.repartos[x.id] || '', placeholder: '0',
+          oninput: (e) => {
+            cambios.repartos[x.id] = e.target.value;
+            cambios.tocado = true;
+            pintarSobrante();
+          }
+        })
+      ]))));
+      cajaReparto.appendChild(el('button.btn.btn-small', {
+        type: 'button', text: 'Repartir a partes iguales',
+        onclick: () => {
+          const monto = D.leerImporte(cambios.monto) || 0;
+          const cuantos = cambios.presupuestos.length;
+          const trozo = D.redondear(monto / cuantos, p.moneda);
+          cambios.presupuestos.forEach((id, i) => {
+            // Al último se le da el resto, para que la suma cuadre exacta.
+            cambios.repartos[id] = String(i === cuantos - 1
+              ? D.redondear(monto - trozo * (cuantos - 1), p.moneda)
+              : trozo);
+          });
+          cambios.tocado = true;
+          pintarDestino();
+        }
+      }));
+    }
+
+    function pintarDestino() {
+      const esCompra = cambios.destino === 'compra';
+
+      // Al salir de «Compra» sólo puede quedar uno: se conserva el primero, que
+      // es el que se estaba mirando arriba del todo.
+      if (!esCompra && cambios.presupuestos.length > 1) {
+        cambios.presupuestos = [cambios.presupuestos[0]];
+      }
+
+      D.clear(cajaSeg);
+      cajaSeg.appendChild(Views.helpers.segmentado(CAJAS, cambios.destino, (v) => {
+        cambios.destino = v;
+        cambios.tocado = true;
+        pintarDestino();
+      }));
+
+      pintarChips();
+      pintarReparto();
+      pintarSobrante();
+
+      avisoDestino.hidden = esCompra;
+      if (!esCompra) {
+        const pre = elegidos()[0];
+        const ciclo = pre ? Store.cicloDe(pre, p.fecha) : null;
+        const donde = cambios.destino === 'fijos' ? 'los gastos fijos' : 'los otros gastos';
+        // Se dice EN QUÉ PERIODO cae, que sale de la fecha del correo y no de
+        // hoy: un aviso de hace tres días puede ir a la quincena pasada. Y que
+        // va a uno solo, que es la diferencia con una compra.
+        avisoDestino.textContent = 'Se suma a ' + donde +
+          (ciclo && ciclo.etiqueta ? ' de ' + ciclo.etiqueta : '') +
+          ', en un solo presupuesto. Descuenta del presupuesto, pero no sale en ' +
+          'la lista de gastos ni en «En qué se fue».';
+      }
+    }
+
+    pintarDestino();
 
     return el('article.card.pendiente', [
       el('div.pendiente-head', [
@@ -659,10 +883,18 @@
         ])
       ]),
 
-      el('div.pendiente-linea', [
-        el('div.field', [el('span', { text: 'Presupuesto' }), selPresupuesto]),
-        el('div.field', [el('span', { text: 'Categoría' }), selCategoria])
-      ]),
+      el('div.field', [el('span', { text: '¿Qué es?' }), cajaSeg]),
+
+      el('div.field', [el('span', { text: '¿De qué presupuestos sale?' }), cajaPre]),
+      cajaReparto,
+      sobrante,
+      avisoDestino,
+
+      // La categoría vale para los tres destinos: en las cajas del periodo es
+      // una etiqueta —no cuenta en «En qué se fue» ni gasta tope—, pero es la
+      // que pone el emoji en la tarjeta y evita perder lo que el correo ya
+      // había adivinado.
+      el('div.field', [el('span', { text: 'Categoría' }), selCategoria]),
 
       el('div.form-actions', [
         el('button.btn', {
@@ -684,26 +916,99 @@
     const monto = D.leerImporte(cambios.monto);
     if (monto === null || monto <= 0) { alert('El importe no se entiende.'); return; }
 
-    Store.addGasto({
-      asignaciones: [{ presupuestoId: cambios.presupuestoId, monto: monto }],
-      monto: monto,
-      moneda: p.moneda,
-      categoria: cambios.categoria,
-      comercio: (cambios.comercio || '').trim(),
-      nota: p.banco + (p.tarjeta ? ' ****' + p.tarjeta : ''),
-      fecha: p.fecha,
-      // La hora venía leída del correo desde el principio y se enseñaba en esta
-      // misma bandeja, pero se perdía justo aquí, al apuntar el gasto. Es la
-      // buena de verdad: la del banco, no la de cuando se revisó el correo.
-      hora: p.hora || '',
-      origen: 'gmail'
-    });
+    if (cambios.destino === 'compra') {
+      const asignaciones = repartoDelGasto(p, cambios, monto);
+      if (!asignaciones) return;
 
-    // Se recuerda el presupuesto elegido: lo normal es que el siguiente vaya
-    // al mismo, y así no hay que tocarlo en cada tarjeta.
-    Store.setGmail({ presupuestoPorDefecto: cambios.presupuestoId });
+      Store.addGasto({
+        asignaciones: asignaciones,
+        monto: monto,
+        moneda: p.moneda,
+        categoria: cambios.categoria,
+        comercio: (cambios.comercio || '').trim(),
+        nota: p.banco + (p.tarjeta ? ' ****' + p.tarjeta : ''),
+        fecha: p.fecha,
+        // La hora venía leída del correo desde el principio y se enseñaba en esta
+        // misma bandeja, pero se perdía justo aquí, al apuntar el gasto. Es la
+        // buena de verdad: la del banco, no la de cuando se revisó el correo.
+        hora: p.hora || '',
+        origen: 'gmail'
+      });
+    } else if (!apuntarEnLaCaja(p, cambios, monto)) {
+      return;
+    }
+
+    // Se recuerda el primero: lo normal es que el siguiente vaya al mismo, y
+    // así no hay que tocarlo en cada tarjeta.
+    Store.setGmail({ presupuestoPorDefecto: cambios.presupuestos[0] });
     Store.cerrarPendiente(p.id);
     App.render();
+  }
+
+  /* Cuánto le toca a cada presupuesto. Con uno solo, o en «completo», el
+     importe entero a cada uno —el mismo gasto tiene que aparecer en los dos
+     sitios, y en los totales generales sigue contando una vez—. Repartido a
+     mano, la suma tiene que cuadrar con el total, o se guardarían colones que
+     no están en ningún sitio.
+
+     Devuelve null cuando no cuadra: quien llama ya no apunta nada. Es la misma
+     cuenta que hace `guardarGasto` en el formulario de apuntar a mano. */
+  function repartoDelGasto(p, cambios, monto) {
+    if (cambios.presupuestos.length === 1 || cambios.modo === 'completo') {
+      return cambios.presupuestos.map((id) => ({ presupuestoId: id, monto: monto }));
+    }
+
+    const asignaciones = cambios.presupuestos.map((id) => ({
+      presupuestoId: id, monto: D.leerImporte(cambios.repartos[id]) || 0
+    }));
+    const resto = D.redondear(
+      monto - asignaciones.reduce((s, a) => s + a.monto, 0), p.moneda);
+
+    if (Math.abs(resto) >= 0.005) {
+      alert(resto > 0
+        ? 'Falta repartir ' + D.dinero(resto, p.moneda) + '. La suma tiene que dar el importe total.'
+        : 'El reparto se pasa ' + D.dinero(Math.abs(resto), p.moneda) + ' del importe total.');
+      return null;
+    }
+    return asignaciones;
+  }
+
+  /* Mete el movimiento en una de las dos cajas del periodo en vez de apuntarlo
+     como compra. Se lleva casi todo: nombre, importe, moneda, categoría, fecha
+     y la misma nota del banco que llevaría siendo compra. Lo único que se queda
+     por el camino es la hora, porque un apunte pertenece a un PERIODO, no a un
+     instante, y no hay dónde enseñarla.
+
+     Va a UN presupuesto, no a varios: un apunte es una línea dentro de la caja
+     de su presupuesto, no un gasto con asignaciones repartibles. Por eso las
+     chapas se comportan como un botón de radio en cuanto se sale de «Compra».
+
+     El periodo sale de la FECHA DEL CORREO, no de hoy, que es lo que hace que
+     un aviso de hace tres días caiga en la quincena que le toca.
+
+     El tipo de cambio no se pone aquí: lo estampa `setApuntes`, que es la única
+     puerta de escritura de las cajas. Y los apuntes que ya estaban se vuelven a
+     guardar tal cual, con el suyo, así que ninguno se reescribe. */
+  function apuntarEnLaCaja(p, cambios, monto) {
+    const pre = Store.presupuesto(cambios.presupuestos[0]);
+    const ciclo = pre ? Store.cicloDe(pre, p.fecha) : null;
+    const guardado = pre && Store.setApuntes(pre.id, ciclo, cambios.destino,
+      Store.apuntesDe(pre, ciclo, cambios.destino).concat([{
+        nombre: (cambios.comercio || '').trim(),
+        monto: monto,
+        moneda: p.moneda,
+        categoria: cambios.categoria || '',
+        nota: p.banco + (p.tarjeta ? ' ****' + p.tarjeta : ''),
+        // La del correo, que es el día en que el banco cobró.
+        fecha: p.fecha
+      }]));
+
+    if (!guardado) {
+      alert('No se pudo apuntar en «' + (pre ? pre.nombre : 'ese presupuesto') +
+        '»: esa fecha no cae en ningún periodo suyo.');
+      return false;
+    }
+    return true;
   }
 
   global.Gmail = {
